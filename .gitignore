@@ -11,3 +11,38 @@ wheels/
 .env
 grid-demand-forecast\.pytest_cache
 data
+
+
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Data and generated files
+data/raw/
+data/interim/
+data/processed/
+*.parquet
+*.csv
+
+# Model artifacts
+*.pkl
+*.joblib
+*.model
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

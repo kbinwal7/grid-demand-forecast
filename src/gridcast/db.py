@@ -65,15 +65,37 @@ COLS = [
 ]
 
 
-def upsert_raw(df: pd.DataFrame) -> int:
+def upsert_raw(df: pd.DataFrame, engine=None) -> int:
     """Upsert a datetime-indexed frame with the columns in COLS."""
-    out = df.rename(columns={"net_transnational_exchange_mw": "net_exchange_mw"})
+
+    engine = engine or get_engine()
+
+    if df.index.name != "datetime":
+        raise ValueError(
+            "Expected DataFrame index to be named 'datetime'. "
+            f"Got: {df.index.name!r}"
+        )
+
+    out = df.rename(
+        columns={"net_transnational_exchange_mw": "net_exchange_mw"}
+    )
+
+    missing = [col for col in COLS if col not in out.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
     out = out[COLS].reset_index().rename(columns={"datetime": "ts"})
     records = out.astype(object).where(out.notna(), None).to_dict("records")
 
+    if not records:
+        return 0
+
     cols = ["ts", *COLS]
     placeholders = ", ".join(f":{column}" for column in cols)
-    updates = ", ".join(f"{column} = EXCLUDED.{column}" for column in COLS)
+    updates = ", ".join(
+        f"{column} = EXCLUDED.{column}" for column in COLS
+    )
+
     statement = text(
         f"""
         INSERT INTO demand_raw ({", ".join(cols)})
@@ -81,6 +103,8 @@ def upsert_raw(df: pd.DataFrame) -> int:
         ON CONFLICT (ts) DO UPDATE SET {updates}
         """
     )
+
     with engine.begin() as connection:
         connection.execute(statement, records)
+
     return len(records)

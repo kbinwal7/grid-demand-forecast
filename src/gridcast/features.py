@@ -95,7 +95,7 @@ def add_weather(df: pd.DataFrame, weather: pd.DataFrame, cdd_base_c: float = 24.
 
 
 # ---------------------------------------------------------------- assembly
-def build_features(df: pd.DataFrame, cfg: dict, weather: pd.DataFrame | None = None):
+def build_features(df, cfg, weather=None, drop_unlabeled=True):
     f, h = cfg["features"], cfg["forecast"]["horizon_steps"]
     target = cfg["forecast"]["target"]
 
@@ -129,5 +129,5 @@ def build_features(df: pd.DataFrame, cfg: dict, weather: pd.DataFrame | None = N
 
     # 2) Drop only rows whose TARGET is unknown. Gap-caused NaNs in features stay NaN
     #    (LightGBM handles them natively; baselines are scored via eval_mask).
-    keep = y.notna()
+    keep = y.notna() if drop_unlabeled else pd.Series(True, index=y.index)
     return X[keep], y[keep]

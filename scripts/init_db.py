@@ -39,7 +39,9 @@ def initialize_database(
             ),
             {"role": app_role, "password": app_password},
         )
-        connection.exec_driver_sql(role_setup)
+        connection.exec_driver_sql(
+            role_setup.replace("%", "%%")
+        )
 
 
 def main() -> None:

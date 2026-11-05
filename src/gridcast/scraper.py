@@ -349,7 +349,7 @@ class GridIndiaClient:
         while (y, m) <= (last_y, last_m):
             for it in self.listing(y, m):
                 d = _title_date(it.get("Title_", ""))
-                if d and start <= d <= end and _is_excel(it):
+                if d and start <= pd.Timestamp(d).date() <= end and _is_excel(it):
                     if d not in best or _revision(it["Title_"]) > _revision(best[d]["Title_"]):
                         best[d] = it
             y, m = (y + 1, 1) if m == 12 else (y, m + 1)
@@ -523,6 +523,31 @@ def main(argv=None) -> int:
         return 0
     return 2
 
+
+def fetch_latest():
+    from datetime import date, timedelta
+
+    end = date.today() - timedelta(days=1)
+    start = end - timedelta(days=7)
+
+    df = extract_range(
+        start,
+        end,
+        refresh=True,
+        verify=True,
+    )
+
+    if df.empty:
+        print("No new Grid-India reports available yet.")
+        return df
+
+    df = df.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df.set_index("timestamp").sort_index()
+
+    df.index.name = "datetime"
+
+    return df
 
 if __name__ == "__main__":
     sys.exit(main())
