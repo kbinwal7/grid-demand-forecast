@@ -34,9 +34,10 @@ class ForecastRepository:
             """
             WITH chosen_model AS (
                 SELECT COALESCE(
-                    :model_id,
+                    CAST(:model_id AS TEXT),
                     (
-                        SELECT model_id FROM model_versions
+                        SELECT model_id
+                        FROM model_versions
                         WHERE is_champion
                         LIMIT 1
                     )
@@ -49,7 +50,10 @@ class ForecastRepository:
                 WHERE f.ts >= :day_start
                   AND f.ts < :day_end
                   AND f.model_id = m.model_id
-                  AND (:source IS NULL OR f.source = :source)
+                  AND (
+                      CAST(:source AS TEXT) IS NULL
+                      OR f.source = CAST(:source AS TEXT)
+                  )
                 ORDER BY CASE f.source WHEN 'live' THEN 0 ELSE 1 END
                 LIMIT 1
             )
@@ -86,16 +90,22 @@ class ForecastRepository:
     def weather_summary(self, target_date: date) -> dict:
         rows = self._all(
             """
-            SELECT MAX(temp_c) AS max_temp_c
+            SELECT ts, temp_c
             FROM weather_forecast
             WHERE ts >= :day_start AND ts < :day_end
+              AND temp_c IS NOT NULL
+            ORDER BY ts
             """,
             {
                 "day_start": datetime.combine(target_date, time.min),
                 "day_end": datetime.combine(target_date + timedelta(days=1), time.min),
             },
         )
-        return {"date": target_date, **rows[0]}
+        return {
+            "date": target_date,
+            "max_temp_c": max((row["temp_c"] for row in rows), default=None),
+            "points": rows,
+        }
 
     @staticmethod
     def _filters(start: date | None, end: date | None) -> dict:
@@ -124,10 +134,10 @@ class ForecastRepository:
                          AND EXTRACT(HOUR FROM ts) < 22
                    ) AS peak_mape
             FROM forecast_vs_actual
-            WHERE (:start_ts IS NULL OR ts >= :start_ts)
-              AND (:end_ts IS NULL OR ts < :end_ts)
-              AND (:model_id IS NULL OR model_id = :model_id)
-              AND (:source IS NULL OR source = :source)
+            WHERE (CAST(:start_ts AS TIMESTAMP) IS NULL OR ts >= CAST(:start_ts AS TIMESTAMP))
+              AND (CAST(:end_ts AS TIMESTAMP) IS NULL OR ts < CAST(:end_ts AS TIMESTAMP))
+              AND (CAST(:model_id AS TEXT) IS NULL OR model_id = CAST(:model_id AS TEXT))
+              AND (CAST(:source AS TEXT) IS NULL OR source = CAST(:source AS TEXT))
             GROUP BY ts::date, model_id, source
             ORDER BY day, model_id, source
             """,
@@ -149,10 +159,10 @@ class ForecastRepository:
                    AVG(err_mw) AS bias_mw,
                    AVG(ape) AS mape
             FROM forecast_vs_actual
-            WHERE (:start_ts IS NULL OR ts >= :start_ts)
-              AND (:end_ts IS NULL OR ts < :end_ts)
-              AND (:model_id IS NULL OR model_id = :model_id)
-              AND (:source IS NULL OR source = :source)
+            WHERE (CAST(:start_ts AS TIMESTAMP) IS NULL OR ts >= CAST(:start_ts AS TIMESTAMP))
+              AND (CAST(:end_ts AS TIMESTAMP) IS NULL OR ts < CAST(:end_ts AS TIMESTAMP))
+              AND (CAST(:model_id AS TEXT) IS NULL OR model_id = CAST(:model_id AS TEXT))
+              AND (CAST(:source AS TEXT) IS NULL OR source = CAST(:source AS TEXT))
             GROUP BY dow, hour, model_id, source
             ORDER BY model_id, source, dow, hour
             """,
@@ -172,10 +182,10 @@ class ForecastRepository:
             SELECT ts::date AS day, model_id, source, COUNT(*) AS n,
                    AVG(ape) AS mape, AVG(err_mw) AS bias_mw
             FROM forecast_vs_actual
-            WHERE (:start_ts IS NULL OR ts >= :start_ts)
-              AND (:end_ts IS NULL OR ts < :end_ts)
-              AND (:model_id IS NULL OR model_id = :model_id)
-              AND (:source IS NULL OR source = :source)
+            WHERE (CAST(:start_ts AS TIMESTAMP) IS NULL OR ts >= CAST(:start_ts AS TIMESTAMP))
+              AND (CAST(:end_ts AS TIMESTAMP) IS NULL OR ts < CAST(:end_ts AS TIMESTAMP))
+              AND (CAST(:model_id AS TEXT) IS NULL OR model_id = CAST(:model_id AS TEXT))
+              AND (CAST(:source AS TEXT) IS NULL OR source = CAST(:source AS TEXT))
             GROUP BY ts::date, model_id, source
             ORDER BY mape DESC NULLS LAST, day DESC
             LIMIT :row_limit
@@ -210,10 +220,10 @@ class ForecastRepository:
                        WHERE q10_mw IS NOT NULL AND q90_mw IS NOT NULL
                    ), 0) AS share
             FROM forecast_vs_actual
-            WHERE (:start_ts IS NULL OR ts >= :start_ts)
-              AND (:end_ts IS NULL OR ts < :end_ts)
-              AND (:model_id IS NULL OR model_id = :model_id)
-              AND (:source IS NULL OR source = :source)
+            WHERE (CAST(:start_ts AS TIMESTAMP) IS NULL OR ts >= CAST(:start_ts AS TIMESTAMP))
+              AND (CAST(:end_ts AS TIMESTAMP) IS NULL OR ts < CAST(:end_ts AS TIMESTAMP))
+              AND (CAST(:model_id AS TEXT) IS NULL OR model_id = CAST(:model_id AS TEXT))
+              AND (CAST(:source AS TEXT) IS NULL OR source = CAST(:source AS TEXT))
             GROUP BY model_id, source
             ORDER BY model_id, source
             """,
@@ -231,6 +241,7 @@ class ForecastRepository:
                     """
                 )
             ).one()
+
             counts = connection.execute(
                 text(
                     """

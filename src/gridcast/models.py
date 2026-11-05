@@ -69,3 +69,95 @@ class LightGBMModel:
 
     def predict(self, X):
         return self.model_.predict(X[self.columns_])   # column order can't silently differ
+
+
+class XGBoostModel:
+    """XGBoost with the same time-ordered early-stopping split as LightGBM."""
+
+    algorithm = "xgboost"
+
+    def __init__(
+        self,
+        params=None,
+        val_days=14,
+        max_rounds=3000,
+        patience=100,
+        refit=True,
+        seed=42,
+    ):
+        model_params = {
+            "objective": "reg:squarederror",
+            "learning_rate": 0.05,
+            "max_depth": 8,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "reg_lambda": 1.0,
+            "tree_method": "hist",
+            "n_jobs": 1,
+            "random_state": seed,
+            **(params or {}),
+        }
+        self.max_rounds = int(model_params.pop("n_estimators", max_rounds))
+        self.params = model_params
+        self.val_days = val_days
+        self.patience = patience
+        self.refit = refit
+
+    def fit(self, X, y):
+        from xgboost import XGBRegressor
+
+        self.columns_ = list(X.columns)
+        cut = X.index.max() - pd.Timedelta(days=self.val_days)
+        is_train = X.index <= cut
+        if is_train.sum() == 0 or (~is_train).sum() == 0:
+            raise ValueError("Training window too short for the validation slice.")
+
+        model = XGBRegressor(
+            **self.params,
+            n_estimators=self.max_rounds,
+            eval_metric="mae",
+            early_stopping_rounds=self.patience,
+        )
+        model.fit(
+            X.loc[is_train, self.columns_],
+            y.loc[is_train],
+            eval_set=[(X.loc[~is_train, self.columns_], y.loc[~is_train])],
+            verbose=False,
+        )
+        self.best_iteration_ = getattr(model, "best_iteration", self.max_rounds - 1)
+
+        if self.refit:
+            model = XGBRegressor(
+                **self.params,
+                n_estimators=self.best_iteration_ + 1,
+                eval_metric="mae",
+            )
+            model.fit(X[self.columns_], y, verbose=False)
+        self.model_ = model
+        return self
+
+    def predict(self, X):
+        return self.model_.predict(X[self.columns_])
+
+
+MODEL_REGISTRY = {
+    "lightgbm": LightGBMModel,
+    "xgboost": XGBoostModel,
+}
+
+
+def create_model(algorithm, config=None, seed=42):
+    """Construct a registered estimator from optional model-specific settings."""
+    try:
+        model_type = MODEL_REGISTRY[algorithm.lower()]
+    except (AttributeError, KeyError) as exc:
+        raise ValueError(
+            f"Unsupported model algorithm {algorithm!r}. "
+            f"Choose from: {', '.join(sorted(MODEL_REGISTRY))}."
+        ) from exc
+
+    options = dict(config or {})
+    options.setdefault("seed", seed)
+    if "params" in options:
+        options["params"] = dict(options["params"])
+    return model_type(**options)

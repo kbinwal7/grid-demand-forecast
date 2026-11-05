@@ -1,6 +1,7 @@
 """Database I/O for the pipeline. Writes are idempotent (ON CONFLICT)."""
 from __future__ import annotations
 
+import base64
 import gzip
 import json
 
@@ -107,6 +108,16 @@ def save_forecasts(engine, model_id, source, preds: pd.Series, issued_at=None) -
 
 # ---------------------------------------------------------------- model storage + champion
 def pack_model(model, meta: dict) -> bytes:
+    if getattr(model, "algorithm", None) == "xgboost":
+        raw_model = model.model_.get_booster().save_raw(raw_format="json")
+        blob = {
+            "algorithm": "xgboost",
+            "columns": model.columns_,
+            "booster": base64.b64encode(raw_model).decode("ascii"),
+            "meta": meta,
+        }
+        return gzip.compress(json.dumps(blob, default=str).encode("utf-8"))
+
     blob = {"columns": model.columns_, "booster": model.model_.booster_.model_to_string(), "meta": meta}
     return gzip.compress(json.dumps(blob, default=str).encode("utf-8"))
 
@@ -116,9 +127,25 @@ class StoredModel:
     def __init__(self, blob: bytes):
         d = json.loads(gzip.decompress(blob).decode("utf-8"))
         self.columns_, self.meta = d["columns"], d["meta"]
-        self._booster = lgb.Booster(model_str=d["booster"])
+        self.algorithm = d.get("algorithm", "lightgbm")
+        if self.algorithm == "xgboost":
+            import xgboost as xgb
+
+            self._booster = xgb.Booster()
+            self._booster.load_model(
+                bytearray(base64.b64decode(d["booster"], validate=True))
+            )
+        elif self.algorithm == "lightgbm":
+            self._booster = lgb.Booster(model_str=d["booster"])
+        else:
+            raise ValueError(f"Unsupported stored model algorithm: {self.algorithm}")
 
     def predict(self, X):
+        if self.algorithm == "xgboost":
+            import xgboost as xgb
+
+            matrix = xgb.DMatrix(X[self.columns_], feature_names=self.columns_)
+            return self._booster.predict(matrix)
         return self._booster.predict(X[self.columns_])
 
 
@@ -140,6 +167,77 @@ def load_artifact(engine, model_id) -> bytes:
 def get_champion(engine):
     with engine.connect() as conn:
         return conn.execute(text("SELECT model_id FROM model_versions WHERE is_champion")).scalar()
+
+
+def get_model_record(engine, model_id):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT model_id, algo, trained_at, train_start, train_end,
+                       n_rows, config_json, cv_mape, cv_peak_mape, cv_mase,
+                       is_champion
+                FROM model_versions
+                WHERE model_id = :model_id
+                """
+            ),
+            {"model_id": model_id},
+        ).first()
+    return dict(row._mapping) if row is not None else None
+
+
+def register_experiment(
+    engine,
+    model_id,
+    algo,
+    feature_set,
+    train_start,
+    train_end,
+    n_rows,
+    metadata,
+    artifact,
+):
+    metrics = metadata["metrics"]
+    config_json = json.dumps(metadata, default=str, allow_nan=False)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO model_versions (
+                    model_id, trained_at, algo, feature_set, train_start,
+                    train_end, cv_mape, cv_peak_mape, cv_mase, is_champion,
+                    n_rows, config_json
+                )
+                VALUES (
+                    :model_id, :trained_at, :algo, :feature_set, :train_start,
+                    :train_end, :cv_mape, :cv_peak_mape, :cv_mase, FALSE,
+                    :n_rows, CAST(:config_json AS JSONB)
+                )
+                """
+            ),
+            {
+                "model_id": model_id,
+                "trained_at": metadata["trained_at"],
+                "algo": algo,
+                "feature_set": feature_set,
+                "train_start": pd.Timestamp(train_start).date(),
+                "train_end": pd.Timestamp(train_end).date(),
+                "cv_mape": metrics.get("mape"),
+                "cv_peak_mape": metrics.get("peak_mape"),
+                "cv_mase": metrics.get("mase"),
+                "n_rows": int(n_rows),
+                "config_json": config_json,
+            },
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO model_artifacts (model_id, payload)
+                VALUES (:model_id, :artifact)
+                """
+            ),
+            {"model_id": model_id, "artifact": artifact},
+        )
 
 
 def promote(engine, model_id) -> None:

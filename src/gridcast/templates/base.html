@@ -1,68 +1,83 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="dark light">
-    <meta name="csp-nonce" content="{{ csp_nonce }}">
-    <title>{% block title %}GridCast{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}">
-    <script defer src="{{ url_for('static', path='js/plotly-style-nonce.js') }}"></script>
-    <script defer src="{{ url_for('static', path='vendor/plotly-cartesian-2.35.2.min.js') }}"></script>
-    {% block head %}{% endblock %}
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="csp-nonce" content="{{ csp_nonce }}" />
+    <title>Grid Demand Forecast | GridCast</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}" />
+    <script
+      defer
+      src="{{ url_for('static', path='js/plotly-style-nonce.js') }}"
+    ></script>
+    <script
+      defer
+      src="{{ url_for('static', path='vendor/plotly-cartesian-2.35.2.min.js') }}"
+    ></script>
+    <script
+      type="module"
+      src="{{ url_for('static', path='js/dashboard.js') }}"
+    ></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
-    <div class="app-shell">
-      <aside class="sidebar" aria-label="Site navigation">
-        <a class="brand" href="/" aria-label="GridCast home">
+    <main id="main-content" class="main-content">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="GridCast dashboard">
           <span class="brand-icon" aria-hidden="true">G</span>
-          <span>
-            <span class="brand-name">GridCast</span>
-            <span class="brand-subtitle">INDIAN GRID DEMAND</span>
-          </span>
+          <h1>GridCast</h1>
         </a>
-        <nav class="navigation" aria-label="Main navigation">
-          <a href="/" {% if active_page == "forecast" %}aria-current="page"{% endif %}>Forecast</a>
-          <a href="/accuracy" {% if active_page == "accuracy" %}aria-current="page"{% endif %}>Accuracy</a>
-          <a href="/failures" {% if active_page == "failures" %}aria-current="page"{% endif %}>Failures</a>
-          <a href="/models" {% if active_page == "models" %}aria-current="page"{% endif %}>Models</a>
-          <a href="/data-health" {% if active_page == "data-health" %}aria-current="page"{% endif %}>Data health</a>
-        </nav>
-      </aside>
-      <main id="main-content" class="main-content">
-        <header class="topbar">
-          <div class="topbar-heading">
-            <p>GridCast <span aria-hidden="true">/</span> Dashboard</p>
-            <h1>{% block page_title %}Forecast{% endblock %}</h1>
-          </div>
-          <form id="dashboard-controls" class="dashboard-controls" aria-label="Dashboard controls">
-            <label for="global-model-select">Model</label>
-            <select id="global-model-select" name="model_id">
-              <option value="">Champion model</option>
-            </select>
-            <label for="global-date-select">Date</label>
-            <input id="global-date-select" name="date" type="date" required>
-            <label for="global-source-select">Source</label>
-            <select id="global-source-select" name="source">
-              <option value="">Live, then backtest</option>
-              <option value="live">Live</option>
-              <option value="backtest">Backtest</option>
-            </select>
-            <button id="dashboard-refresh" type="button">Refresh</button>
-            <label class="auto-refresh-control" for="auto-refresh">
-              <input id="auto-refresh" type="checkbox">
-              Auto · 5 min
-            </label>
-            <span id="dashboard-source-badge" class="source-badge" aria-live="polite">Source: live + backtest</span>
-          </form>
-          <p id="dashboard-notice" class="dashboard-notice" role="status" aria-live="polite" hidden></p>
-        </header>
-        <section class="page-content">
-          {% block content %}{% endblock %}
-        </section>
-        <footer class="site-footer">Weather data by Open-Meteo.com</footer>
-      </main>
-    </div>
+        <form
+          id="dashboard-controls"
+          class="dashboard-controls"
+          aria-label="Dashboard controls"
+        >
+          <label class="visually-hidden" for="global-model-select">Model</label>
+          <select id="global-model-select" name="model_id" aria-label="Model">
+            <option value="">Loading models…</option>
+          </select>
+          <label class="visually-hidden" for="global-date-select"
+            >Forecast date</label
+          >
+          <input
+            id="global-date-select"
+            name="date"
+            type="date"
+            required
+            aria-label="Forecast date"
+          />
+          <button
+            id="dashboard-refresh"
+            class="refresh-button"
+            type="button"
+            aria-label="Refresh active tab"
+          >
+            ↻ <span>Refresh</span>
+          </button>
+          <span
+            id="dashboard-source-badge"
+            class="source-badge"
+            aria-live="polite"
+            >Source: live + backtest</span
+          >
+        </form>
+        <p
+          id="dashboard-notice"
+          class="dashboard-notice"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></p>
+      </header>
+
+      <section class="page-content">{% block content %}{% endblock %}</section>
+      <footer class="site-footer">
+        <span>GridCast · Indian electricity demand forecasting</span
+        ><a href="https://open-meteo.com/" target="_blank" rel="noreferrer"
+          >Weather data by Open-Meteo.com</a
+        >
+      </footer>
+    </main>
   </body>
 </html>

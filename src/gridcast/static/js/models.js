@@ -1,6 +1,5 @@
 import { formatNumber, formatTimestamp } from "./api.js";
 import { chartLayout, drawPlot, runChart, runPanel } from "./charts.js";
-import { initDashboardControls } from "./controls.js";
 
 function appendCell(row, value) {
   const cell = document.createElement("td");
@@ -83,8 +82,8 @@ function renderModelTable(root, controls) {
   return models.length > 0;
 }
 
-function renderPage(controls) {
-  void Promise.all([
+export function renderPage(controls) {
+  return Promise.all([
     runChart(
       document.querySelector("#models-chart-root"),
       (chart) => renderModelChart(controls, chart),
@@ -97,5 +96,3 @@ function renderPage(controls) {
     ),
   ]);
 }
-
-initDashboardControls(renderPage);

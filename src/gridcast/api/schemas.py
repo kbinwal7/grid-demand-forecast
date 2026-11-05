@@ -54,9 +54,15 @@ class ForecastResponse(BaseModel):
     points: list[ForecastPoint]
 
 
+class WeatherPoint(BaseModel):
+    ts: datetime
+    temp_c: float
+
+
 class WeatherResponse(BaseModel):
     date: date
     max_temp_c: float | None
+    points: list[WeatherPoint]
 
 
 class ActualPoint(BaseModel):

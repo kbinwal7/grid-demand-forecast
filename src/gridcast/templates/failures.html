@@ -1,8 +1,3 @@
-{% extends "base.html" %}
-{% block title %}Failures | GridCast{% endblock %}
-{% block page_title %}Failures{% endblock %}
-{% block head %}<script type="module" src="{{ url_for('static', path='js/failures.js') }}"></script>{% endblock %}
-{% block content %}
 <header class="page-heading">
   <div>
     <p class="eyebrow">FORECAST DIAGNOSTICS</p>
@@ -14,7 +9,7 @@
   <div class="panel-heading">
     <div>
       <h2 id="bias-heatmap-title">Bias by weekday and hour</h2>
-      <p>Positive bias means forecast demand exceeded actual demand. Source is shown in the top bar.</p>
+      <p>Mean forecast minus actual demand over the last 30 days, weighted by scored intervals. Positive values mean over-forecast; negative values mean under-forecast.</p>
     </div>
     <div class="panel-actions">
       <details class="info-tooltip"><summary aria-label="About this heatmap">i</summary><p>Weekday labels use Monday=0 through Sunday=6; each cell is mean forecast minus actual MW.</p></details>
@@ -24,6 +19,12 @@
   <div id="failures-heatmap-root" class="chart-root" data-chart-root>
     <p class="chart-state" data-chart-state role="status" aria-live="polite">Loading bias heatmap…</p>
     <div id="failures-heatmap" class="chart" data-chart aria-label="Forecast bias heatmap by weekday and hour" role="img"></div>
+  </div>
+  <div class="heatmap-key" aria-label="Heatmap color key">
+    <span><i class="heatmap-swatch heatmap-negative"></i>Under-forecast</span>
+    <span><i class="heatmap-swatch heatmap-neutral"></i>Near zero</span>
+    <span><i class="heatmap-swatch heatmap-positive"></i>Over-forecast</span>
+    <span class="heatmap-help">Hover a cell for exact bias, interval count, and source.</span>
   </div>
 </section>
 
@@ -46,4 +47,3 @@
     </table>
   </div>
 </section>
-{% endblock %}

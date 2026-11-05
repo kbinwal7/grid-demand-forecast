@@ -1,8 +1,56 @@
 import { formatNumber, queryString } from "./api.js";
 import { chartLayout, drawPlot, runChart, runPanel } from "./charts.js";
-import { initDashboardControls } from "./controls.js";
 
 const RANGE_DAYS = 30;
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+
+export function aggregateBiasCells(items) {
+  const cells = new Map();
+  for (const item of items) {
+    if (
+      !Number.isInteger(item.dow) ||
+      item.dow < 0 ||
+      item.dow >= WEEKDAYS.length ||
+      !Number.isInteger(item.hour) ||
+      item.hour < 0 ||
+      item.hour >= HOURS.length ||
+      !Number.isFinite(item.bias_mw) ||
+      !Number.isFinite(item.n) ||
+      item.n <= 0
+    ) {
+      continue;
+    }
+    const key = `${item.dow}:${item.hour}`;
+    const cell = cells.get(key) || { weightedBias: 0, n: 0, sources: new Set() };
+    cell.weightedBias += item.bias_mw * item.n;
+    cell.n += item.n;
+    cell.sources.add(item.source);
+    cells.set(key, cell);
+  }
+  if (!cells.size) {
+    return null;
+  }
+  const biasFor = (dow, hour) => {
+    const cell = cells.get(`${dow}:${hour}`);
+    return cell ? cell.weightedBias / cell.n : null;
+  };
+  const maxAbsoluteBias = Math.max(
+    ...[...cells.values()].map((cell) =>
+      Math.abs(cell.weightedBias / cell.n),
+    ),
+  );
+  return {
+    z: WEEKDAYS.map((_, dow) => HOURS.map((hour) => biasFor(dow, hour))),
+    customdata: WEEKDAYS.map((_, dow) =>
+      HOURS.map((hour) => {
+        const cell = cells.get(`${dow}:${hour}`);
+        return cell ? [cell.n, [...cell.sources].sort().join(", ")] : [0, ""];
+      }),
+    ),
+    magnitude: Math.max(10, Math.ceil(maxAbsoluteBias / 10) * 10),
+  };
+}
 
 function dayOffset(day, days) {
   const result = new Date(`${day}T00:00:00Z`);
@@ -27,45 +75,54 @@ async function renderHeatmap(controls, chart, request) {
   if (!items.length) {
     return false;
   }
-  const sources = controls.source()
-    ? [controls.source()]
-    : ["live", "backtest"].filter((source) =>
-        items.some((item) => item.source === source),
-      );
-  const hours = Array.from({ length: 24 }, (_, hour) => hour);
-  const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const traces = sources.map((source) => {
-    const sourceRows = items.filter((item) => item.source === source);
-    const yLabels = weekdays.map((day) => `${day} · ${source}`);
-    const cells = new Map(
-      sourceRows.map((item) => [`${item.dow}:${item.hour}`, item.bias_mw]),
-    );
-    return {
-      x: hours,
-      y: yLabels,
-      z: weekdays.map((_, dow) =>
-        hours.map((hour) => cells.get(`${dow}:${hour}`) ?? null),
-      ),
-      type: "heatmap",
-      name: source,
-      colorbar: { title: "Bias MW" },
-      hovertemplate: "%{y}<br>%{x}:00 IST<br>Bias: %{z:.1f} MW<extra></extra>",
-      zmid: 0,
-      colorscale: [
-        [0, "#5794f2"],
-        [0.5, "#181b1f"],
-        [1, "#f2495c"],
-      ],
-      showscale: true,
-    };
-  });
+  const aggregate = aggregateBiasCells(items);
+  if (!aggregate) {
+    return false;
+  }
+  const traces = [{
+    x: HOURS,
+    y: WEEKDAYS,
+    z: aggregate.z,
+    customdata: aggregate.customdata,
+    type: "heatmap",
+    colorbar: {
+      title: { text: "Mean bias (MW)", side: "right" },
+      tickformat: ".0f",
+      ticks: "outside",
+    },
+    hovertemplate:
+      "%{y}, %{x}:00 IST<br>Mean bias: %{z:+.1f} MW" +
+      "<br>Scored intervals: %{customdata[0]}" +
+      "<br>Sources: %{customdata[1]}<extra></extra>",
+    zmin: -aggregate.magnitude,
+    zmax: aggregate.magnitude,
+    colorscale: [
+      [0, "#3b75b8"],
+      [0.35, "#91b8d9"],
+      [0.5, "#252a30"],
+      [0.65, "#f0bf7a"],
+      [1, "#c95749"],
+    ],
+    showscale: true,
+    xgap: 2,
+    ygap: 2,
+  }];
   const layout = chartLayout({
-    title: `Forecast bias by hour · ${sources.join(" + ")}`,
-    yTitle: "",
-    xTitle: "Hour (IST)",
+    title: `Mean forecast bias by weekday and hour · last ${RANGE_DAYS} days`,
+    yTitle: "Day of week",
+    xTitle: "Hour of day (IST)",
   });
-  layout.xaxis.dtick = 1;
-  layout.yaxis.autorange = "reversed";
+  layout.xaxis = {
+    ...layout.xaxis,
+    tickmode: "array",
+    tickvals: HOURS.filter((hour) => hour % 3 === 0),
+    ticktext: HOURS.filter((hour) => hour % 3 === 0).map((hour) =>
+      String(hour).padStart(2, "0"),
+    ),
+    range: [-0.5, 23.5],
+  };
+  layout.yaxis = { ...layout.yaxis, autorange: "reversed" };
+  layout.margin = { ...layout.margin, l: 76, r: 112, t: 58, b: 62   };
   await drawPlot(chart, traces, layout);
   return true;
 }
@@ -96,8 +153,8 @@ async function renderWorstDays(root, request, controls) {
   return items.length > 0;
 }
 
-function renderPage(controls) {
-  void Promise.all([
+export function renderPage(controls) {
+  return Promise.all([
     runChart(
       document.querySelector("#failures-heatmap-root"),
       (chart, request) => renderHeatmap(controls, chart, request),
@@ -110,5 +167,3 @@ function renderPage(controls) {
     ),
   ]);
 }
-
-initDashboardControls(renderPage);

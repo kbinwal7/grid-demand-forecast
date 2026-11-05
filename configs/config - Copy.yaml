@@ -1,0 +1,64 @@
+seed: 42
+
+data:
+  raw_path: data/raw/data.csv # change this
+  freq: 15min
+  max_gap_steps: 4 # fill gaps up to 1 hour, no longer
+
+forecast:
+  target: demand_met_mw
+  horizon_steps: 96 # day-ahead
+
+backtest:
+  n_folds: 12
+  test_days: 28
+  min_train_days: 180
+  peak_start_hour: 18
+  peak_end_hour: 22
+
+features:
+  demand_lags: [96, 192, 672]
+  rolling_windows: [96, 672]
+  gen_cols: [solar_mw, wind_mw]
+  gen_lags: [96, 672]
+  use_month: false
+  use_weather: true
+  cdd_base_c: 24 # cooling-degree base temperature
+
+weather:
+  model: ecmwf_ifs
+  run_hour_utc: "00:00" # init time of the forecast run (UTC)
+  run_offset_days: 1 # use the run issued this many days before the target day
+  availability_lag_hours: 8 # conservative delay between init time and publication
+  timezone: Asia/Kolkata # (single key now)
+  request_delay_s: 1.0 # about 3,600 calls/hour, under the 5,000/hour limit
+  daily_call_budget: 8000 # per script run, under the 10,000/day limit
+  cache_dir: data/interim/weather_cache
+  features_path: data/interim/weather_weighted.parquet
+  window_mode: default
+  max_fallback_age_days: 2
+
+  locations:
+    delhi: { latitude: 28.6139, longitude: 77.2090, weight: 1.00 }
+
+jobs:
+  model_prefix: lgbm_weather
+  min_rows: 20000
+  max_staleness_days: 300
+  min_weather_coverage: 0.95
+  min_prev_day_coverage: 0.9
+  recent_folds: 3
+  recent_days: 28
+  promote_tolerance: 0.02
+  min_live_points: 672
+
+# Separate model for delayed Grid-India reports. It remains disabled until
+# fallback-backtest passes and the returned model_id is configured below.
+fallback:
+  enabled: true
+  model_id: lgbm_fallback_20261105
+  model_prefix: lgbm_fallback
+  max_demand_age_days: 2
+  min_lag_coverage: 0.90
+  min_eval_rows: 5000
+  max_peak_mape_regression_pct: 5.0
