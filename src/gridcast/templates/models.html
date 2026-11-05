@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Models | GridCast{% endblock %}
+{% block page_title %}Models{% endblock %}
+{% block head %}<script type="module" src="{{ url_for('static', path='js/models.js') }}"></script>{% endblock %}
+{% block content %}
+<header class="page-heading">
+  <div>
+    <p class="eyebrow">MODEL REGISTRY</p>
+    <p class="page-description">Review registered models and their recorded cross-validation metrics.</p>
+  </div>
+</header>
+
+<section class="panel" data-panel aria-labelledby="model-mape-title">
+  <div class="panel-heading">
+    <h2 id="model-mape-title">Backtest cross-validation MAPE</h2>
+    <div class="panel-actions">
+      <span class="source-badge">Source: backtest</span>
+      <details class="info-tooltip"><summary aria-label="About this chart">i</summary><p>Values are stored CV metrics and are not live accuracy measurements.</p></details>
+      <button class="panel-expand" type="button" data-panel-expand aria-label="Expand cross-validation MAPE chart">⛶</button>
+    </div>
+  </div>
+  <div id="models-chart-root" class="chart-root" data-chart-root>
+    <p class="chart-state" data-chart-state role="status" aria-live="polite">Loading model metrics…</p>
+    <div id="models-chart" class="chart" data-chart aria-label="Backtest cross-validation MAPE by model" role="img"></div>
+  </div>
+</section>
+
+<section class="panel" data-panel>
+  <div class="panel-heading">
+    <h2>Registered model details</h2>
+    <div class="panel-actions">
+      <details class="info-tooltip"><summary aria-label="About this table">i</summary><p>Champion status and CV metrics are read from the model registry.</p></details>
+      <button class="panel-expand" type="button" data-panel-expand aria-label="Expand registered model table">⛶</button>
+    </div>
+  </div>
+  <div id="models-table-root" class="table-wrap" data-panel-root>
+    <p id="models-state" class="chart-state" data-panel-state role="status">Loading models…</p>
+    <table id="models-table" data-panel-content hidden>
+      <caption class="visually-hidden">Model versions, training periods and cross-validation metrics</caption>
+      <thead>
+        <tr><th scope="col">Model</th><th scope="col">Algorithm</th><th scope="col">Feature set</th><th scope="col">Trained at</th><th scope="col">Train period</th><th scope="col">MAPE</th><th scope="col">Peak MAPE</th><th scope="col">MASE</th><th scope="col">Champion</th></tr>
+      </thead>
+      <tbody id="models-body"></tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

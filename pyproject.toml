@@ -1,0 +1,54 @@
+
+[project]
+name = "gridcast"
+version = "0.1.0"
+description = "Indian electricity demand forecasting project"
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    { name = "kbinwal7", email = "khusheebinwal29@gmail.com" }
+]
+dependencies = [
+    "fastapi>=0.115.0",
+    "holidays>=0.107",
+    "jinja2>=3.1.6",
+    "lightgbm>=4.7.0",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+    "openmeteo-requests>=1.7.5",
+    "pandas>=3.1.0",
+    "plotly>=7.1.0",
+    "psycopg[binary]>=3.3.6",
+    "pyarrow>=26.0.0",
+    "python-dotenv>=1.2.4",
+    "pyyaml>=6.0.3",
+    "requests>=2.34.2",
+    "requests-cache>=1.3.3",
+    "retry-requests>=2.0.0",
+    "scikit-learn>=1.9.1",
+    "seaborn>=0.13.2",
+    "slowapi>=0.1.9",
+    "sqlalchemy>=2.1.6",
+    "statsmodels>=0.15.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+    "jupyterlab>=4.6.5",
+    "nbstripout>=0.9.1",
+    "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv.build-backend]
+module-root = "src"
