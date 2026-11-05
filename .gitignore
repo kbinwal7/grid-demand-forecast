@@ -48,8 +48,9 @@ data/processed/
 Thumbs.db
 
 
-grid-demand-forecast\fix_model_artifacts.py
-grid-demand-forecast\inspect_weather.py
-grid-demand-forecast\test_ingets.py
-grid-demand-forecast\check_schema.py
-grid-demand-forecast\check_demand.py
+fix_model_artifacts.py
+inspect_weather.py
+test_ingets.py
+check_schema.py
+check_demand.py
+fix_model_artifacts.py
