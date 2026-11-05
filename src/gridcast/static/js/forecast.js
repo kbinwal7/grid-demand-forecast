@@ -1,6 +1,6 @@
 import { queryString, formatNumber } from "./api.js";
 import { chartLayout, drawPlot, runChart, timeLabels } from "./charts.js";
-import { applyTileStatus, initDashboardControls } from "./controls.js";
+import { applyTileStatus } from "./controls.js";
 import {
   BASELINE_MODEL_ID,
   coverageStatus,
@@ -60,6 +60,13 @@ function updateAccuracyTiles(dailyItems, coverageItems, models, modelId, source)
   const coverageResult = coverageStatus(coveragePct, coverage?.total || 0);
   document.querySelector("#forecast-coverage").textContent =
     coverageResult === "neutral" ? "n/a" : `${formatNumber(coveragePct)}%`;
+  const coverageTrack = document.querySelector(".coverage-track span");
+  if (coverageTrack) {
+    coverageTrack.style.width = coveragePct === null ? "0%" : `${Math.max(0, Math.min(100, coveragePct))}%`;
+    coverageTrack.parentElement.style.setProperty("--coverage", coverageTrack.style.width);
+  }
+  const secondaryMape = document.querySelector("#forecast-mape-secondary");
+  if (secondaryMape) secondaryMape.textContent = mapeValue === null ? "Not enough scored days" : `${formatNumber(mapeValue)}%`;
   document.querySelector("#forecast-coverage-note").textContent =
     `last 7 days · ${source} · ${coverage?.total || 0} scored points`;
   applyTileStatus(
@@ -116,33 +123,23 @@ async function renderForecast(controls, chart, request) {
     source,
   });
   const auxiliary = await Promise.allSettled([
-    request(`/v1/weather${queryString({ date })}`),
     request(`/v1/accuracy/daily${query}`),
     request(`/v1/accuracy/coverage${query}`),
     request(`/v1/actuals${queryString({ start: date, end: date })}`),
   ]);
-  const weather = auxiliary[0].status === "fulfilled" ? auxiliary[0].value : null;
-  document.querySelector("#forecast-max-temp").textContent =
-    weather?.max_temp_c === null || weather?.max_temp_c === undefined
-      ? "n/a °C"
-      : `${formatNumber(weather.max_temp_c)} °C`;
-  document.querySelector("#forecast-weather-note").textContent =
-    auxiliary[0].status === "rejected"
-      ? `Weather unavailable: ${auxiliary[0].reason.message}`
-      : "Weather forecast for selected date";
-  if (auxiliary[1].status === "fulfilled" && auxiliary[2].status === "fulfilled") {
+  if (auxiliary[0].status === "fulfilled" && auxiliary[1].status === "fulfilled") {
     updateAccuracyTiles(
+      auxiliary[0].value.items,
       auxiliary[1].value.items,
-      auxiliary[2].value.items,
       controls.models(),
       modelId,
       source,
     );
   } else {
     const error =
-      auxiliary[1].status === "rejected"
-        ? auxiliary[1].reason
-        : auxiliary[2].reason;
+      auxiliary[0].status === "rejected"
+        ? auxiliary[0].reason
+        : auxiliary[1].reason;
     document.querySelector("#forecast-mape-note").textContent =
       `last 7 days · ${source} · unavailable: ${error.message}`;
     document.querySelector("#forecast-coverage-note").textContent =
@@ -150,10 +147,10 @@ async function renderForecast(controls, chart, request) {
   }
 
   const actuals =
-    auxiliary[3].status === "fulfilled" ? auxiliary[3].value.points : [];
+    auxiliary[2].status === "fulfilled" ? auxiliary[2].value.points : [];
   document.querySelector("#forecast-chart-note").textContent =
-    auxiliary[3].status === "rejected"
-      ? `Actual overlay unavailable: ${auxiliary[3].reason.message}`
+    auxiliary[2].status === "rejected"
+      ? `Actual overlay unavailable: ${auxiliary[2].reason.message}`
       : `Forecast source: ${source}. Actual demand is shown when available.`;
   const actualByTimestamp = new Map(
     actuals.map((point) => [
@@ -218,12 +215,50 @@ async function renderForecast(controls, chart, request) {
   return true;
 }
 
-function loadDashboard(controls) {
-  void runChart(
-    chartRoot,
-    (chart, request) => renderForecast(controls, chart, request),
-    "No forecast data is available for this date and model.",
+async function renderTemperature(controls, chart, request) {
+  const weather = await request(`/v1/weather${queryString({ date: controls.date() })}`);
+  const value = weather.max_temp_c;
+  document.querySelector("#forecast-max-temp").textContent =
+    value === null || value === undefined ? "n/a °C" : `${formatNumber(value)} °C`;
+  document.querySelector("#forecast-weather-note").textContent =
+    `Weather forecast · ${controls.date()}`;
+  const points = weather.points || [];
+  if (!points.length) {
+    return false;
+  }
+  await drawPlot(
+    chart,
+    [
+      {
+        x: points.map((point) => String(point.ts).slice(11, 16)),
+        y: points.map((point) => point.temp_c),
+        type: "scatter",
+        mode: "lines",
+        name: "Temperature",
+        line: { color: "#ff9830", width: 2 },
+        hovertemplate: "%{x} IST<br>%{y:.1f} °C<extra></extra>",
+      },
+    ],
+    chartLayout({
+      title: `Demand-weighted temperature · ${controls.date()}`,
+      yTitle: "Temperature (°C)",
+      xTitle: "Time (IST)",
+    }),
   );
+  return true;
 }
 
-initDashboardControls(loadDashboard);
+export function renderPage(controls) {
+  return Promise.all([
+    runChart(
+      chartRoot,
+      (chart, request) => renderForecast(controls, chart, request),
+      "No forecast data is available for this date and model.",
+    ),
+    runChart(
+      document.querySelector("#forecast-temperature-root"),
+      (chart, request) => renderTemperature(controls, chart, request),
+      "No weather temperature is available for this date.",
+    ),
+  ]);
+}

@@ -1,6 +1,6 @@
 import { ApiError, queryString } from "./api.js";
 import { chartLayout, drawPlot, runChart, timeLabels } from "./charts.js";
-import { initDashboardControls } from "./controls.js";
+import { BASELINE_MODEL_ID } from "./thresholds.js";
 
 const RANGE_DAYS = 30;
 
@@ -22,7 +22,6 @@ function rangeQuery(controls) {
   return queryString({
     start: dayOffset(controls.date(), -(RANGE_DAYS - 1)),
     end: controls.date(),
-    model_id: controls.modelId(),
     source: controls.source(),
   });
 }
@@ -115,23 +114,29 @@ async function renderDailyMetric(controls, chart, request, field, title) {
     : ["live", "backtest"];
   const traces = [];
   for (const source of sourceNames) {
-    const rows = items.filter(
-      (item) => item.source === source && item[field] !== null,
-    );
-    if (!rows.length) {
-      continue;
+    const modelIds = [...new Set([controls.modelId(), BASELINE_MODEL_ID].filter(Boolean))];
+    for (const modelId of modelIds) {
+      const rows = items.filter(
+        (item) =>
+          item.source === source &&
+          item.model_id === modelId &&
+          item[field] !== null,
+      );
+      if (!rows.length) {
+        continue;
+      }
+      const values =
+        field === "mape"
+          ? rollingSevenDay(rows)
+          : rows.map((row) => ({ day: row.day, value: row.peak_mape }));
+      traces.push({
+        x: values.map((item) => item.day),
+        y: values.map((item) => item.value),
+        type: "scatter",
+        mode: field === "mape" ? "lines" : "lines+markers",
+        name: `${modelId} · ${source} · ${field === "mape" ? "rolling 7-day" : "18:00–22:00"}`,
+      });
     }
-    const values =
-      field === "mape"
-        ? rollingSevenDay(rows)
-        : rows.map((row) => ({ day: row.day, value: row.peak_mape }));
-    traces.push({
-      x: values.map((item) => item.day),
-      y: values.map((item) => item.value),
-      type: "scatter",
-      mode: field === "mape" ? "lines" : "lines+markers",
-      name: `${source} · ${field === "mape" ? "rolling 7-day" : "18:00–22:00"}`,
-    });
   }
   if (!traces.length) {
     return false;
@@ -175,8 +180,8 @@ async function renderCoverage(controls, chart, request) {
   return true;
 }
 
-function renderPage(controls) {
-  void Promise.all([
+export function renderPage(controls) {
+  return Promise.all([
     runChart(
       document.querySelector("#accuracy-comparison-root"),
       (chart, request) => renderComparison(controls, chart, request),
@@ -213,5 +218,3 @@ function renderPage(controls) {
     ),
   ]);
 }
-
-initDashboardControls(renderPage);

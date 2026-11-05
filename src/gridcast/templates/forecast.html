@@ -1,60 +1,19 @@
-{% extends "base.html" %}
-{% block title %}Forecast | GridCast{% endblock %}
-{% block page_title %}Forecast{% endblock %}
-{% block head %}<script type="module" src="{{ url_for('static', path='js/forecast.js') }}"></script>{% endblock %}
-{% block content %}
-<header class="page-heading">
-  <div>
-    <p class="eyebrow">DAY-AHEAD DEMAND</p>
-    <p class="page-description">Quarter-hourly Indian grid demand forecast for a selected day.</p>
-  </div>
-</header>
-
-<section class="stat-tiles" aria-label="Forecast and accuracy summary">
-  <article class="stat-tile">
-    <h2>Expected peak</h2>
-    <p id="forecast-peak" class="stat-value">— MW</p>
-    <p class="stat-note">Selected day · forecast source in header</p>
-  </article>
-  <article class="stat-tile">
-    <h2>Time of peak</h2>
-    <p id="forecast-peak-time" class="stat-value">— IST</p>
-    <p class="stat-note">Local time · IST</p>
-  </article>
-  <article class="stat-tile">
-    <h2>Forecast max temperature</h2>
-    <p id="forecast-max-temp" class="stat-value">n/a °C</p>
-    <p id="forecast-weather-note" class="stat-note">Weather forecast for selected date</p>
-  </article>
-  <article id="forecast-mape-tile" class="stat-tile">
-    <h2>7-day MAPE</h2>
-    <p id="forecast-mape" class="stat-value">n/a</p>
-    <p id="forecast-mape-note" class="stat-note">last 7 days · selecting source</p>
-  </article>
-  <article id="forecast-coverage-tile" class="stat-tile">
-    <h2>Interval coverage (q10–q90)</h2>
-    <p id="forecast-coverage" class="stat-value">n/a</p>
-    <p id="forecast-coverage-note" class="stat-note">last 7 days · actuals inside interval</p>
-  </article>
-</section>
-
-<section class="panel" data-panel aria-labelledby="forecast-chart-title">
+<section class="panel forecast-panel" data-panel aria-labelledby="forecast-chart-title">
   <div class="panel-heading">
-    <div>
-      <h2 id="forecast-chart-title">Quarter-hour demand</h2>
-      <p id="forecast-chart-note">Forecast, actual demand when available, and prediction intervals.</p>
-    </div>
-    <div class="panel-actions">
-      <details class="info-tooltip">
-        <summary aria-label="About this chart">i</summary>
-        <p>Backtest forecasts are historical evaluations, not live forecasts. The source is labeled in the top bar and legend.</p>
-      </details>
-      <button class="panel-expand" type="button" data-panel-expand aria-label="Expand forecast chart">⛶</button>
-    </div>
+    <div><h2 id="forecast-chart-title">Day-ahead forecast · 96 intervals</h2><p id="forecast-chart-note">Forecast, actual demand when available, and prediction intervals.</p></div>
+    <span class="unit-pill">MW</span>
   </div>
   <div id="forecast-chart-root" class="chart-root" data-chart-root>
     <p class="chart-state" data-chart-state role="status" aria-live="polite">Loading forecast…</p>
-    <div id="forecast-chart" class="chart" data-chart aria-label="Demand forecast chart" role="img"></div>
+    <div id="forecast-chart" class="chart" data-chart aria-label="Day-ahead demand forecast with optional q10 to q90 interval" role="img"></div>
+  </div>
+  <div class="chart-footnote"><span><i class="legend-dot forecast-dot"></i> Forecast</span><span><i class="legend-band"></i> q10–q90 interval</span><span><i class="legend-line actual-line"></i> Actual (when available)</span></div>
+</section>
+
+<section class="panel" data-panel aria-labelledby="forecast-temperature-title">
+  <div class="panel-heading"><div><h2 id="forecast-temperature-title">Weather temperature</h2><p id="temperature-chart-note">Daily maximum from available weather data.</p></div><span class="unit-pill">°C</span></div>
+  <div id="forecast-temperature-root" class="chart-root" data-chart-root>
+    <p class="chart-state" data-chart-state role="status" aria-live="polite">Loading weather…</p>
+    <div id="forecast-temperature-chart" class="chart" data-chart aria-label="Daily maximum temperature for the selected forecast date" role="img"></div>
   </div>
 </section>
-{% endblock %}

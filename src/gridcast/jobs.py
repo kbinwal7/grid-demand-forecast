@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +15,7 @@ from gridcast.metrics import mape
 from gridcast.models import Blend, LightGBMModel
 from gridcast.pipeline import METRICS, comparable_rows
 from gridcast.store import (StoredModel, get_champion, live_vs_actual, load_artifact, pack_model,
-                            promote, prune_artifacts, read_demand, read_weather, register_model,
+                            get_model_record, promote, prune_artifacts, read_demand, read_weather, register_model,
                             save_artifact, save_forecasts, upsert_weather, weather_days_missing)
 from gridcast.weather import (WeatherError, WeatherRateLimitError, build_weighted_weather, load_weather,
                               make_throttle, resolve_run, weather_table_path)
@@ -247,9 +248,19 @@ def retrain(engine, cfg, now=None) -> dict:
 def forecast_day(engine, cfg, day, model_id=None, now=None) -> pd.Series:
     j, now = jobs_cfg(cfg), (now if now is not None else now_local(cfg))
     day = pd.Timestamp(day).normalize()
-    model_id = model_id or get_champion(engine)
+    champion_id = get_champion(engine)
+    model_id = model_id or champion_id
     if model_id is None:
         raise RuntimeError("No champion model yet. Run the weekly job first.")
+    if model_id != champion_id:
+        model_record = get_model_record(engine, model_id)
+        metadata = model_record.get("config_json") if model_record else None
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        if metadata and metadata.get("status") == "completed":
+            raise ValueError(
+                "Experiment models cannot write production forecasts until explicitly promoted."
+            )
     model = StoredModel(load_artifact(engine, model_id))
 
     df, weather = build_dataset(engine, cfg)

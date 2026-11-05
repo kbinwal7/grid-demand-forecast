@@ -48,7 +48,14 @@ class FakeRepository:
         return [{"ts": datetime(2026, 1, 1), "actual_mw": 120.0}]
 
     def weather_summary(self, target_date):
-        return {"date": target_date, "max_temp_c": 34.0}
+        return {
+            "date": target_date,
+            "max_temp_c": 34.0,
+            "points": [
+                {"ts": datetime(2026, 1, 1, 6), "temp_c": 22.0},
+                {"ts": datetime(2026, 1, 1, 12), "temp_c": 34.0},
+            ],
+        }
 
     def accuracy_daily(self, start, end, model_id, source):
         return [
@@ -161,7 +168,14 @@ def test_read_api_routes_return_explicit_response_shapes():
     assert data_health["forecast_sources"] == ["live", "backtest"]
     weather = client.get("/v1/weather", params={"date": "2026-01-01"})
     assert weather.status_code == 200
-    assert weather.json() == {"date": "2026-01-01", "max_temp_c": 34.0}
+    assert weather.json() == {
+        "date": "2026-01-01",
+        "max_temp_c": 34.0,
+        "points": [
+            {"ts": "2026-01-01T06:00:00", "temp_c": 22.0},
+            {"ts": "2026-01-01T12:00:00", "temp_c": 34.0},
+        ],
+    }
     assert client.get("/health").json()["status"] == "healthy"
     assert client.get("/docs").status_code == 200
     assert client.get("/openapi.json").status_code == 200
@@ -307,23 +321,17 @@ def test_accuracy_range_is_inclusive_and_capped_at_92_days():
     )
 
 
-def test_dashboard_pages_render_their_expected_containers():
+def test_dashboard_is_a_single_page_with_all_tabs_and_stat_tiles():
     app = create_app(initialize_engine=False)
-    expected_ids = {
-        "/": "forecast-chart-root",
-        "/forecast": "forecast-chart-root",
-        "/accuracy": "accuracy-comparison-root",
-        "/failures": "failures-heatmap-root",
-        "/models": "models-chart-root",
-        "/data-health": "health-chart-root",
-    }
-
     with TestClient(app) as client:
-        for path, container_id in expected_ids.items():
-            response = client.get(path)
-            assert response.status_code == 200
-            assert f'id="{container_id}"' in response.text
-            assert "Weather data by Open-Meteo.com" in response.text
+        response = client.get("/")
+        assert response.status_code == 200
+        for tab_id in ("forecast", "accuracy", "failures", "models", "data-health"):
+            assert f'id="{tab_id}"' in response.text
+        assert 'id="dashboard-stat-tiles"' in response.text
+        assert "Weather data by Open-Meteo.com" in response.text
+        for path in ("/forecast", "/accuracy", "/failures", "/models", "/data-health"):
+            assert client.get(path).status_code == 404
 
 
 def test_dashboard_security_and_static_cache_headers():

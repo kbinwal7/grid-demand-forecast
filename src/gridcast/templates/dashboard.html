@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="stat-tiles" id="dashboard-stat-tiles" aria-label="Forecast summary">
+  <article class="stat-tile stat-primary">
+    <h2>Expected peak</h2>
+    <p id="forecast-peak" class="stat-value">— MW</p>
+    <p class="stat-note">Forecast day</p>
+  </article>
+  <article class="stat-tile">
+    <h2>Time of peak</h2>
+    <p id="forecast-peak-time" class="stat-value">— IST</p>
+    <p class="stat-note">India Standard Time</p>
+  </article>
+  <article class="stat-tile">
+    <h2>Max temperature</h2>
+    <p id="forecast-max-temp" class="stat-value">n/a °C</p>
+    <p id="forecast-weather-note" class="stat-note">Weather forecast for selected date</p>
+  </article>
+  <article id="forecast-mape-tile" class="stat-tile">
+    <h2>7-day MAPE</h2>
+    <p id="forecast-mape" class="stat-value">n/a</p>
+    <p id="forecast-mape-note" class="stat-note">Recent scored forecast accuracy</p>
+  </article>
+  <article id="forecast-coverage-tile" class="stat-tile">
+    <h2>Interval coverage</h2>
+    <p id="forecast-coverage" class="stat-value">n/a</p>
+    <p id="forecast-coverage-note" class="stat-note">q10 to q90 · last 7 days</p>
+  </article>
+</section>
+
+<div class="tab-list" role="tablist" aria-label="Dashboard views">
+  <button id="forecast" class="tab-button" type="button" role="tab" aria-controls="panel-forecast" aria-selected="true" tabindex="0">Forecast</button>
+  <button id="accuracy" class="tab-button" type="button" role="tab" aria-controls="panel-accuracy" aria-selected="false" tabindex="-1">Accuracy</button>
+  <button id="failures" class="tab-button" type="button" role="tab" aria-controls="panel-failures" aria-selected="false" tabindex="-1">Failures</button>
+  <button id="models" class="tab-button" type="button" role="tab" aria-controls="panel-models" aria-selected="false" tabindex="-1">Models</button>
+  <button id="data-health" class="tab-button" type="button" role="tab" aria-controls="panel-data-health" aria-selected="false" tabindex="-1">Data health</button>
+</div>
+
+<section id="panel-forecast" class="tab-panel" role="tabpanel" aria-labelledby="forecast">
+  {% include "forecast.html" %}
+</section>
+<section id="panel-accuracy" class="tab-panel" role="tabpanel" aria-labelledby="accuracy" hidden>
+  {% include "accuracy.html" %}
+</section>
+<section id="panel-failures" class="tab-panel" role="tabpanel" aria-labelledby="failures" hidden>
+  {% include "failures.html" %}
+</section>
+<section id="panel-models" class="tab-panel" role="tabpanel" aria-labelledby="models" hidden>
+  {% include "models.html" %}
+</section>
+<section id="panel-data-health" class="tab-panel" role="tabpanel" aria-labelledby="data-health" hidden>
+  {% include "data_health.html" %}
+</section>
+{% endblock %}

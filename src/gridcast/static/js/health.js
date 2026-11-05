@@ -1,6 +1,5 @@
 import { formatNumber, formatTimestamp } from "./api.js";
 import { chartLayout, drawPlot, runChart, runPanel } from "./charts.js";
-import { initDashboardControls } from "./controls.js";
 
 function setHealthMetrics(data) {
   document.querySelector("#health-last-ingested").textContent =
@@ -19,6 +18,8 @@ function setHealthMetrics(data) {
     data.weather_rows,
     0,
   );
+  document.querySelector("#health-weather-coverage").textContent =
+    data.weather_rows > 0 ? "Available" : "No records";
   document.querySelector("#health-forecast-rows").textContent = formatNumber(
     data.forecast_rows,
     0,
@@ -31,8 +32,8 @@ async function loadHealth(request) {
   return data;
 }
 
-async function renderCountChart(chart, request) {
-  const data = await loadHealth(request);
+async function renderCountChart(chart, getHealth) {
+  const data = await getHealth();
   await drawPlot(
     chart,
     [
@@ -53,8 +54,8 @@ async function renderCountChart(chart, request) {
   return true;
 }
 
-async function renderMissingDays(root, request) {
-  const data = await loadHealth(request);
+async function renderMissingDays(root, getHealth) {
+  const data = await getHealth();
   const list = root.querySelector("#missing-days-list");
   list.replaceChildren();
   if (!data.missing_days.length) {
@@ -71,19 +72,22 @@ async function renderMissingDays(root, request) {
   return true;
 }
 
-function renderPage() {
-  void Promise.all([
+export function renderPage() {
+  let healthPromise;
+  const getHealth = (request) => {
+    healthPromise ??= loadHealth(request);
+    return healthPromise;
+  };
+  return Promise.all([
     runChart(
       document.querySelector("#health-chart-root"),
-      renderCountChart,
+      (chart, request) => renderCountChart(chart, () => getHealth(request)),
       "No data-health metrics are available.",
     ),
     runPanel(
       document.querySelector("#missing-days-root"),
-      renderMissingDays,
+      (root, request) => renderMissingDays(root, () => getHealth(request)),
       "Missing demand-day information is unavailable.",
     ),
   ]);
 }
-
-initDashboardControls(renderPage);

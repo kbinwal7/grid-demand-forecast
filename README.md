@@ -88,6 +88,47 @@ per-response style nonce for Plotly's generated stylesheet (without
 Run tests with `uv run python -m pytest -q`. PostgreSQL integration tests run
 only when `TEST_DATABASE_URL` points to an initialized test database.
 
+## Model experimentation
+
+Experiments reuse the configured historical demand/weather data, the existing
+feature builder, comparable-row filter, walk-forward folds, and evaluation
+metrics. XGBoost is available alongside LightGBM, but experiments are
+non-promoting: they register a non-champion model and never write forecast
+rows or replace the active model.
+
+After the local database has been initialized and the existing model/artifact
+pipeline migration (`sql/002_pipline.sql`) has been applied, run:
+
+```powershell
+uv sync
+uv run python -m gridcast.experiment --model xgboost
+```
+
+By default, XGBoost settings are read from
+`experiments.models.xgboost` in `configs/config.yaml`. Hyperparameters can be
+overridden for one run with a JSON object; for example:
+
+```powershell
+uv run python -m gridcast.experiment --model xgboost --params '{"max_depth": 6, "learning_rate": 0.03}'
+```
+
+The command evaluates the candidate and the current registered champion on
+the same walk-forward folds. It reports overall and per-fold MAPE, peak-hour
+MAPE, MAE, MASE, bias, training time, and prediction time. Unavailable metrics
+are recorded as `null`, not estimated. The complete JSON report is written to
+`data/experiments/`; the packed model and registry metadata are stored under a
+unique experiment model ID in `model_artifacts` and `model_versions`. The
+registered candidate has `is_champion = false`. The existing scheduled
+training and forecasting jobs remain LightGBM-based, and no experiment
+automatically promotes a model. Promotion remains a separate explicit
+operation.
+
+To add another estimator, implement the existing `fit`/`predict` model
+convention in `gridcast.models`, add its factory to `MODEL_REGISTRY`, and
+provide an artifact pack/load branch in `gridcast.store`. The shared
+experiment runner then uses it with the same features and chronological
+folds.
+
 ## Environment variables
 
 | Variable | Purpose |

@@ -46,11 +46,3 @@ data/processed/
 # OS
 .DS_Store
 Thumbs.db
-
-
-fix_model_artifacts.py
-inspect_weather.py
-test_ingets.py
-check_schema.py
-check_demand.py
-fix_model_artifacts.py

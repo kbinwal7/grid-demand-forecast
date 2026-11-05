@@ -1,8 +1,3 @@
-{% extends "base.html" %}
-{% block title %}Accuracy | GridCast{% endblock %}
-{% block page_title %}Accuracy{% endblock %}
-{% block head %}<script type="module" src="{{ url_for('static', path='js/accuracy.js') }}"></script>{% endblock %}
-{% block content %}
 <header class="page-heading">
   <div>
     <p class="eyebrow">MODEL EVALUATION</p>
@@ -29,7 +24,7 @@
 
 <section class="panel" data-panel>
   <div class="panel-heading">
-    <h2>Rolling 7-day MAPE</h2>
+    <div><h2>Rolling 7-day MAPE</h2><p>Selected model compared with the blend_1d_1w baseline.</p></div>
     <div class="panel-actions">
       <details class="info-tooltip"><summary aria-label="About this chart">i</summary><p>Each point averages up to seven daily MAPE values for its labeled source.</p></details>
       <button class="panel-expand" type="button" data-panel-expand aria-label="Expand rolling MAPE chart">⛶</button>
@@ -71,4 +66,3 @@
     <div id="accuracy-coverage-chart" class="chart" data-chart aria-label="Interval coverage by forecast source" role="img"></div>
   </div>
 </section>
-{% endblock %}
