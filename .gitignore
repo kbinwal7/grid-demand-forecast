@@ -55,3 +55,79 @@ check_schema.py
 fix_model_artifacts.py
 inspect_weather.py
 test_ingets.py
+@'
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# Local databases and generated data
+*.db
+*.sqlite
+*.sqlite3
+data/raw/
+data/processed/
+data/interim/
+artifacts/
+models/
+reports/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Frontend dependencies/build output
+node_modules/
+.next/
+dist/
+out/
+coverage/
+
+# Local deployment and diagnostic files
+*.bak
+*.old
+debug/
+check_*.py
+test_output/
+'@ | Set-Content -Encoding utf8 .gitignore
