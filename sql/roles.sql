@@ -29,5 +29,7 @@ BEGIN
     'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO %I',
     app_role
   );
+  -- The web app never needs the serialized model blobs.
+  EXECUTE format('REVOKE ALL ON model_artifacts FROM %I', app_role);
 END
 $$;

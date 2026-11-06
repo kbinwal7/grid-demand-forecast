@@ -1,18 +1,12 @@
+"""Pydantic response models: the contract between the API and the dashboard JS."""
+
 from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel
 
-ForecastSource = Literal["backtest", "live"]
-
-
-class ErrorDetail(BaseModel):
-    code: str
-    message: str
-
-
-class ErrorResponse(BaseModel):
-    error: ErrorDetail
+Source = Literal["backtest", "live"]
+Status = Literal["green", "yellow", "red", "neutral"]
 
 
 class HealthResponse(BaseModel):
@@ -23,7 +17,6 @@ class HealthResponse(BaseModel):
 
 class ModelVersion(BaseModel):
     model_id: str
-    cv_source: Literal["backtest"] = "backtest"
     trained_at: datetime
     algo: str
     feature_set: str | None
@@ -39,101 +32,67 @@ class ModelsResponse(BaseModel):
     items: list[ModelVersion]
 
 
-class ForecastPoint(BaseModel):
+# ---------------------------------------------------------------- KPI tiles
+class Kpi(BaseModel):
+    value: float | None
+    status: Status = "neutral"
+    note: str = ""
+
+
+class SummaryResponse(BaseModel):
+    model_id: str
+    date: date
+    source: Source | None
+    peak_mw: Kpi
+    peak_time: str | None
+    max_temp_c: Kpi
+    mape_7d: Kpi
+    coverage_7d: Kpi
+    data_lag_days: Kpi
+
+
+# ---------------------------------------------------------------- charts
+class DayPoint(BaseModel):
     ts: datetime
     yhat_mw: float
     q10_mw: float | None
     q90_mw: float | None
+    actual_mw: float | None
+    temp_c: float | None
 
 
-class ForecastResponse(BaseModel):
+class DayResponse(BaseModel):
     model_id: str
-    source: ForecastSource
     date: date
+    source: Source
     issued_at: datetime
-    points: list[ForecastPoint]
-
-
-class WeatherPoint(BaseModel):
-    ts: datetime
-    temp_c: float
-
-
-class WeatherResponse(BaseModel):
-    date: date
-    max_temp_c: float | None
-    points: list[WeatherPoint]
-
-
-class ActualPoint(BaseModel):
-    ts: datetime
-    actual_mw: float
-
-
-class ActualsResponse(BaseModel):
-    start: date
-    end: date
-    points: list[ActualPoint]
+    points: list[DayPoint]
 
 
 class DailyAccuracy(BaseModel):
     day: date
-    model_id: str
-    source: ForecastSource
     n: int
     mape: float | None
-    mae_mw: float
-    bias_mw: float
     peak_mape: float | None
+    bias_mw: float | None
 
 
 class DailyAccuracyResponse(BaseModel):
+    model_id: str
+    start: date
+    end: date
     items: list[DailyAccuracy]
 
 
 class HeatmapCell(BaseModel):
-    dow: int
+    dow: int  # Monday = 0
     hour: int
-    model_id: str
-    source: ForecastSource
     n: int
-    bias_mw: float
-    mape: float | None
+    bias_mw: float | None
 
 
 class HeatmapResponse(BaseModel):
+    model_id: str
+    start: date
+    end: date
     items: list[HeatmapCell]
-
-
-class WorstDay(BaseModel):
-    day: date
-    model_id: str
-    source: ForecastSource
-    n: int
-    mape: float | None
-    bias_mw: float
-
-
-class WorstDaysResponse(BaseModel):
-    items: list[WorstDay]
-
-
-class CoverageItem(BaseModel):
-    model_id: str
-    source: ForecastSource
-    total: int
-    covered: int
-    share: float | None
-
-
-class CoverageResponse(BaseModel):
-    items: list[CoverageItem]
-
-
-class DataHealthResponse(BaseModel):
-    last_ingested_at: datetime | None
-    missing_days: list[date]
-    demand_rows: int
-    weather_rows: int
-    forecast_rows: int
-    forecast_sources: list[ForecastSource] = ["live", "backtest"]

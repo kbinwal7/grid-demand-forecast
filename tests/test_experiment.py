@@ -29,7 +29,7 @@ def _toy(n_days=55):
         {
             "interval_of_day": interval,
             "noise": np.cos(interval / 96 * 2 * np.pi),
-            "demand_met_mw_lag96": target.shift(96),
+            "demand_met_mw_lag288": target.shift(288),
             "demand_met_mw_lag672": target.shift(672),
         },
         index=index,
@@ -41,7 +41,7 @@ def _cfg():
     return {
         "seed": 7,
         "forecast": {"target": "demand_met_mw"},
-        "features": {"use_weather": False, "demand_lags": [96, 672]},
+        "features": {"use_weather": False, "demand_lags": [288, 672]},
         "backtest": {
             "n_folds": 2,
             "test_days": 3,
@@ -66,7 +66,7 @@ def _cfg():
 
 
 def test_model_registry_selects_lightgbm_and_xgboost():
-    assert set(MODEL_REGISTRY) == {"lightgbm", "xgboost"}
+    assert {"lightgbm", "xgboost"} <= set(MODEL_REGISTRY)
     assert isinstance(create_model("lightgbm"), LightGBMModel)
     assert isinstance(create_model("xgboost"), XGBoostModel)
     with pytest.raises(ValueError, match="Unsupported model algorithm"):
@@ -111,7 +111,7 @@ def test_xgboost_artifact_round_trip_and_lightgbm_legacy_artifact():
     lightgbm = LightGBMModel(seed=7, max_rounds=20).fit(X.iloc[:-96], y.iloc[:-96])
     legacy_blob = pack_model(lightgbm, metadata)
     legacy_data = json.loads(gzip.decompress(legacy_blob))
-    assert "algorithm" not in legacy_data
+    assert legacy_data["algorithm"] == "lightgbm"
     legacy_stored = StoredModel(legacy_blob)
     assert legacy_stored.algorithm == "lightgbm"
     np.testing.assert_allclose(

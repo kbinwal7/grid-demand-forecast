@@ -1,202 +1,122 @@
 # GridCast
 
-Day-ahead electricity demand forecasting for the Indian grid at 15-minute
-resolution (96 intervals per day). GridCast stores demand, weather, model
-versions, and forecasts in PostgreSQL. One FastAPI process serves a read-only
-JSON API and a server-rendered Jinja2 dashboard; the web app never loads a
-forecasting model, builds features, or trains.
+Day-ahead electricity demand forecasting for the Indian grid at 15-minute resolution
+(96 intervals per day). A learning project: PostgreSQL stores demand, weather, models and
+forecasts; a FastAPI app serves a read-only JSON API and a one-page dashboard.
 
-## Architecture
-
-```mermaid
-flowchart LR
-    N[Notebooks and scheduled forecasting jobs] -->|backtest parquet or live forecast rows| W[Database loader or job]
-    W -->|write connection| DB[(PostgreSQL 16 or Neon)]
-    DB -->|read-only connection| APP[FastAPI application]
-    APP --> API[/v1 JSON API]
-    APP --> HTML[Jinja2 dashboard pages]
-    HTML --> JS[Vanilla JavaScript ES modules]
-    JS -->|same-origin fetch| API
-    JS --> PLOT[Vendored Plotly.js 2.35.2]
+```
+Grid-India scraper ─┐                              ┌─ /v1/* JSON API ──┐
+Open-Meteo weather ─┼─► jobs / scripts ─► Postgres ─► FastAPI          ├─► dashboard (Plotly)
+LightGBM training  ─┘    (write role)               (read-only role)  └─ /  HTML page ───┘
 ```
 
-Backtest predictions are historical evaluations, not live forecasts. API
-responses and dashboard panels label their source as `backtest` or `live`;
-combined data-health counts identify both sources.
+## Project layout
 
-Naive PostgreSQL `TIMESTAMP` values represent local Indian Standard Time (IST).
-`TIMESTAMPTZ` values represent instants and are displayed in IST where shown.
-The browser does not reinterpret naive forecast timestamps as its own local
-timezone.
-
-## Local development (PowerShell)
-
-Requirements: Python 3.13, [uv](https://docs.astral.sh/uv/), and Docker Desktop.
-
-```powershell
-Copy-Item .env.example .env
-notepad .env
+```
+gc/
+├── configs/config.yaml        # pipeline settings (features, backtest, weather, jobs)
+├── sql/
+│   ├── schema.sql             # all tables + forecast_vs_actual view (idempotent)
+│   └── roles.sql              # read-only role for the web app
+├── scripts/
+│   ├── init_db.py             # apply schema + create read-only role
+│   ├── seed_demo.py           # synthetic demo data (no scraping needed)
+│   ├── run_pipeline.py        # real pipeline: bootstrap | daily | weekly | retrain | forecast
+│   ├── load_forecasts.py      # load notebook backtest parquet into the DB
+│   └── backfill_weather.py    # historical weather download
+├── src/gridcast/
+│   ├── api/                   # ── BACKEND ──
+│   │   ├── main.py            #   app factory, error handlers, headers, static mount
+│   │   ├── routes_api.py      #   /health and /v1/* endpoints
+│   │   ├── routes_pages.py    #   GET / -> dashboard.html
+│   │   ├── repository.py      #   every SQL query the API runs
+│   │   ├── kpis.py            #   green/yellow/red rules for KPI tiles
+│   │   ├── schemas.py         #   response models (the API contract)
+│   │   └── deps.py            #   read-only DB engine
+│   ├── templates/dashboard.html   # ── FRONTEND ── one page
+│   ├── static/css/app.css
+│   ├── static/js/dashboard.js     #   fetch /v1 -> render tiles + charts
+│   ├── static/js/api.js           #   fetch helper
+│   ├── static/vendor/             #   Plotly.js (vendored, no CDN/npm)
+│   └── *.py                   # ── ML PIPELINE ── data, features, models, backtest, jobs, scraper, weather, store
+├── notebooks/                 # exploration
+└── tests/
 ```
 
-Set different strong values for the local database owner and read-only app
-passwords. The example config uses `ADMIN_DATABASE_URL` for schema and forecast
-writes and `DATABASE_URL` for the web app's read-only role. URL-encode reserved
-characters in passwords embedded in either connection URL.
+## Setup (Windows / PowerShell)
+
+Requires Python 3.12+ and a running PostgreSQL.
 
 ```powershell
-uv sync
-docker compose up -d db
-uv run python scripts/init_db.py
+# 1. virtual environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"            # add ,notebooks for Jupyter + matplotlib
+
+# 2. database (once, in psql as the postgres superuser)
+#    CREATE DATABASE gridcast;
 ```
 
-`init_db.py` is idempotent. It applies `sql/schema.sql` and configures the
-read-only role from `APP_DB_USER` and `APP_DB_PASSWORD`.
+Create `.env` in the project root:
 
-Load a notebook-produced parquet file after the demand history used for MASE is
-present in `demand_raw`:
-
-```powershell
-uv run python scripts/load_forecasts.py `
-  --model-id blend_1d_1w `
-  --preds data\processed\backtest_preds_blend_1d_1w.parquet `
-  --source backtest `
-  --trained-at 2026-11-05T00:00:00+05:30 `
-  --champion
+```ini
+# write access: init_db, seed_demo, pipeline jobs
+ADMIN_DATABASE_URL=postgresql://postgres:<your-postgres-password>@localhost:5432/gridcast
+# read-only role created by init_db; used by the web app
+APP_DB_USER=gridcast_reader
+APP_DB_PASSWORD=<pick-a-password>
+DATABASE_URL=postgresql://gridcast_reader:<same-password>@localhost:5432/gridcast
 ```
 
-Run the app and open the dashboard, API docs, or health endpoint:
+URL-encode special characters in passwords (`@` → `%40`, `#` → `%23`).
 
 ```powershell
-uv run uvicorn gridcast.api.main:app --host 127.0.0.1 --port 8000
+# 3. tables + read-only role, then demo data
+python scripts/init_db.py
+python scripts/seed_demo.py
+
+# 4. run
+uvicorn gridcast.api.main:app --reload
 ```
 
 - Dashboard: <http://127.0.0.1:8000/>
-- JSON API and OpenAPI docs: <http://127.0.0.1:8000/docs>
-- Health: <http://127.0.0.1:8000/health>
+- API docs (try every endpoint): <http://127.0.0.1:8000/docs>
 
-The pages are Forecast (`/`), Accuracy (`/accuracy`), Failures (`/failures`),
-Models (`/models`), and Data health (`/data-health`). Dashboard charts use
-same-origin API requests and the locally vendored Plotly.js bundle. No npm,
-frontend build, runtime CDN, or second web service is used.
+Tests: `pytest -q`
 
-Responses larger than 500 bytes are gzip-compressed. Successful `/v1` JSON GET
-responses include ETags for conditional requests; static files are cached for
-one hour. The CSP keeps scripts and assets same-origin and uses a random
-per-response style nonce for Plotly's generated stylesheet (without
-`unsafe-inline`).
+## The dashboard
 
-Run tests with `uv run python -m pytest -q`. PostgreSQL integration tests run
-only when `TEST_DATABASE_URL` points to an initialized test database.
+One page, two filters (model, forecast day). Everything else follows from them.
 
-## Model experimentation
+| Element | What it tells you | API |
+| --- | --- | --- |
+| **Expected peak** | max forecast MW for the day and its time | `/v1/summary` |
+| **Max temperature** | main demand driver (cooling load) | `/v1/summary` |
+| **MAPE · last 7 days** | average % error; green = near the champion's backtest, red = worse than the naive baseline | `/v1/summary` |
+| **Interval coverage** | share of actuals inside q10–q90; ~80% means well-calibrated uncertainty | `/v1/summary` |
+| **Data freshness** | days since the latest published actual, plus gaps | `/v1/summary` |
+| Forecast vs actual | 96-interval forecast, uncertainty band, actual overlay | `/v1/day` |
+| Daily error | daily MAPE and evening-peak (18–22h) MAPE over 30 days | `/v1/accuracy/daily` |
+| Bias heatmap | systematic over/under-forecast by weekday × hour | `/v1/accuracy/heatmap` |
 
-Experiments reuse the configured historical demand/weather data, the existing
-feature builder, comparable-row filter, walk-forward folds, and evaluation
-metrics. XGBoost is available alongside LightGBM, but experiments are
-non-promoting: they register a non-champion model and never write forecast
-rows or replace the active model.
+`model_id` defaults to the champion and `date` to that model's latest forecast day. Where a
+model has both a `live` and a `backtest` forecast for the same interval, `live` wins.
 
-After the local database has been initialized and the existing model/artifact
-pipeline migration (`sql/002_pipline.sql`) has been applied, run:
+## Real pipeline (optional)
+
+`seed_demo.py` is enough to explore the app. To use real data instead:
 
 ```powershell
-uv sync
-uv run python -m gridcast.experiment --model xgboost
+python scripts/run_pipeline.py bootstrap   # scrape Grid-India + weather history into Postgres
+python scripts/run_pipeline.py retrain     # LightGBM walk-forward backtest, register + promote
+python scripts/run_pipeline.py daily       # ingest latest actuals, forecast tomorrow
+python -m gridcast.experiment --model xgboost   # non-promoting experiment
 ```
 
-By default, XGBoost settings are read from
-`experiments.models.xgboost` in `configs/config.yaml`. Hyperparameters can be
-overridden for one run with a JSON object; for example:
+**Information cutoff:** the forecast for day D is issued on D-1, and Grid-India publishes D-1
+actuals only after D-1 ends. So the features use demand only through D-2 (192- and
+672-step lags). Training, backtesting and live inference all use the same cutoff.
 
-```powershell
-uv run python -m gridcast.experiment --model xgboost --params '{"max_depth": 6, "learning_rate": 0.03}'
-```
-
-The command evaluates the candidate and the current registered champion on
-the same walk-forward folds. It reports overall and per-fold MAPE, peak-hour
-MAPE, MAE, MASE, bias, training time, and prediction time. Unavailable metrics
-are recorded as `null`, not estimated. The complete JSON report is written to
-`data/experiments/`; the packed model and registry metadata are stored under a
-unique experiment model ID in `model_artifacts` and `model_versions`. The
-registered candidate has `is_champion = false`. The existing scheduled
-training and forecasting jobs remain LightGBM-based, and no experiment
-automatically promotes a model. Promotion remains a separate explicit
-operation.
-
-To add another estimator, implement the existing `fit`/`predict` model
-convention in `gridcast.models`, add its factory to `MODEL_REGISTRY`, and
-provide an artifact pack/load branch in `gridcast.store`. The shared
-experiment runner then uses it with the same features and chronological
-folds.
-
-## Environment variables
-
-| Variable | Purpose |
-| --- | --- |
-| `DATABASE_URL` | Required by the web app; PostgreSQL URL for a **read-only** role. Use Neon's pooled URL in production. |
-| `ADMIN_DATABASE_URL` | Write-capable URL used by `scripts/init_db.py` and forecast-loading jobs. Do not configure this on the web service. |
-| `APP_DB_USER`, `APP_DB_PASSWORD` | Role name and password created for read-only app access by `scripts/init_db.py`. |
-| `ALLOWED_HOSTS` | Comma-separated trusted hostnames; include the Render `*.onrender.com` host. |
-| `RATE_LIMIT` | SlowAPI limit, for example `60/minute`. |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_HOST`, `POSTGRES_PORT` | Local Compose database settings and fallback owner connection settings. |
-| `PORT` | Port supplied by the container platform; defaults to `8000`. |
-| `TEST_DATABASE_URL` | Optional isolated PostgreSQL database for integration tests. |
-
-`DATABASE_URL` and `ADMIN_DATABASE_URL` are deliberately separate: application
-requests use only the read-only URL, while initialization and loading scripts
-use the administrative URL.
-
-## Dashboard screenshots
-
-Add current screenshots in `docs/screenshots/` when available:
-
-![Forecast dashboard screenshot placeholder](docs/screenshots/forecast-dashboard.png)
-
-![Accuracy dashboard screenshot placeholder](docs/screenshots/accuracy-dashboard.png)
-
-## Deploy to Neon and Render
-
-Deployment is documented but has **not** been performed.
-
-1. Create a Neon PostgreSQL database. Keep an owner connection string private
-   for initialization and data-loading; use the **pooled connection string for
-   the read-only `gridcast_reader` role** as the web service's `DATABASE_URL`.
-2. From a trusted local shell, set `ADMIN_DATABASE_URL` to Neon's owner
-   connection string, set `APP_DB_USER=gridcast_reader` and a unique
-   `APP_DB_PASSWORD`, then run `uv run python scripts/init_db.py`. Load the
-   stored data using `ADMIN_DATABASE_URL`; do not give the web service this
-   write-capable credential.
-3. Create a Render web service from this repository using `render.yaml` (Docker,
-   free plan, `/health` health check). Set `DATABASE_URL` to the Neon pooled
-   URL for the read-only role. Set `ALLOWED_HOSTS` to include the service's
-   `*.onrender.com` hostname and configure `RATE_LIMIT` as needed.
-4. Verify `/health`, `/docs`, and each dashboard page. Render's free service may
-   sleep between requests; the dashboard shows a waking state and retries.
-
-Neon and Render free-tier limits and features change. **Re-check current
-provider limits, pricing, connection limits, and sleep behavior before
-deploying.**
-
-The container uses a non-root user and health check. Its Uvicorn command trusts
-forwarded headers from any peer (`--forwarded-allow-ips='*'`) because the web
-service is intended to sit behind Render's proxy; do not expose the container
-directly to untrusted clients.
+Timestamps are naive IST (`TIMESTAMP`), and the browser shows them as-is.
 
 Weather data by [Open-Meteo.com](https://open-meteo.com/).
-
-
-### Day-ahead information cutoff
-
-GridCast issues the forecast for **tomorrow (D)** on **today (D-1)**. Grid-India
-actual demand for D-1 is assumed to be published only after D-1 ends, so the
-forecast deliberately uses demand only through **D-2 23:45**. The feature set
-therefore uses 192-step (two-day) and 672-step (seven-day) demand/generation
-lags; 96-step lags and rolling features that could see D-1 actuals are not used
-as inputs. The rolling windows are shifted by the forecast horizon plus one
-publication-delay day so training, backtesting, and live inference share the
-same information cutoff.
-
-Run `uv run python scripts/run_pipeline.py daily` on D-1 to ingest the latest
-published actuals, fetch Delhi weather for D, and save the D forecast. The
-manual `forecast` command also defaults to tomorrow; pass `--date YYYY-MM-DD`
-to specify another target day.

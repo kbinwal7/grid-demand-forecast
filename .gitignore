@@ -1,133 +1,32 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-.env
-grid-demand-forecast\.pytest_cache
-data
-
-.ruff_cache
-
-
-
 # Python
 __pycache__/
 *.py[cod]
-.venv/
-venv/
-.pytest_cache/
-.mypy_cache/
+*.egg-info/
+build/
+dist/
 
-# Secrets
+# Virtual environment
+.venv/
+
+# Secrets (keep the template)
 .env
 .env.*
 !.env.example
 
-# Data and generated files
-data/raw/
-data/interim/
-data/processed/
+# Data, models and pipeline outputs
+data/
 *.parquet
 *.csv
-
-# Model artifacts
 *.pkl
 *.joblib
-*.model
 
-# IDE
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
 .vscode/
 .idea/
 
 # OS
 .DS_Store
 Thumbs.db
-
-
-check_demand.py
-check_schema.py
-fix_model_artifacts.py
-inspect_weather.py
-test_ingets.py
-@'
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.egg-info/
-.eggs/
-dist/
-build/
-
-# Virtual environments
-.venv/
-venv/
-env/
-
-# Environment variables and secrets
-.env
-.env.*
-!.env.example
-
-# IDE and editor
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
-.DS_Store
-Thumbs.db
-Desktop.ini
-
-# Testing and coverage
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-.mypy_cache/
-.ruff_cache/
-
-# Logs and temporary files
-*.log
-logs/
-tmp/
-temp/
-*.tmp
-
-# Local databases and generated data
-*.db
-*.sqlite
-*.sqlite3
-data/raw/
-data/processed/
-data/interim/
-artifacts/
-models/
-reports/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Frontend dependencies/build output
-node_modules/
-.next/
-dist/
-out/
-coverage/
-
-# Local deployment and diagnostic files
-*.bak
-*.old
-debug/
-check_*.py
-test_output/
-'@ | Set-Content -Encoding utf8 .gitignore
