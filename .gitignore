@@ -12,6 +12,8 @@ wheels/
 grid-demand-forecast\.pytest_cache
 data
 
+.ruff_cache
+
 
 
 # Python
@@ -46,3 +48,10 @@ data/processed/
 # OS
 .DS_Store
 Thumbs.db
+
+
+check_demand.py
+check_schema.py
+fix_model_artifacts.py
+inspect_weather.py
+test_ingets.py
