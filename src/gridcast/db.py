@@ -1,3 +1,5 @@
+"""Write-capable database connection used by scripts and pipeline jobs (never the web app)."""
+
 import os
 from pathlib import Path
 
@@ -37,16 +39,6 @@ engine: Engine = create_engine(_database_url(), pool_pre_ping=True, echo=False)
 
 def get_engine() -> Engine:
     return engine
-
-
-def init_db() -> None:
-    """Apply the shared schema file to the configured write database."""
-    schema_path = PROJECT_ROOT / "sql" / "schema.sql"
-    statements = [statement.strip() for statement in schema_path.read_text().split(";")]
-    with engine.begin() as connection:
-        for statement in statements:
-            if statement:
-                connection.exec_driver_sql(statement)
 
 
 COLS = [

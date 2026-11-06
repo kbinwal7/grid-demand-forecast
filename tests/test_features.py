@@ -10,8 +10,8 @@ from gridcast.features import (
 
 CFG = {
     "forecast": {"target": "demand_met_mw", "horizon_steps": 96},
-    "features": {"demand_lags": [192, 672], "rolling_windows": [96],
-                 "gen_cols": ["solar_mw"], "gen_lags": [192], "use_month": False,
+    "features": {"demand_lags": [288, 672], "rolling_windows": [96],
+                 "gen_cols": ["solar_mw"], "gen_lags": [288], "use_month": False,
                  "use_weather": False},
 }
 

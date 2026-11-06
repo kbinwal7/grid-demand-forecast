@@ -1,3 +1,5 @@
+"""FastAPI dependencies: the read-only database engine and repository."""
+
 import os
 from pathlib import Path
 
@@ -13,27 +15,23 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 
 def create_read_only_engine() -> Engine:
-    database_url = os.getenv("APP_DATABASE_URL") or os.getenv("DATABASE_URL")
+    """Engine for DATABASE_URL, which should point at the read-only app role."""
+    database_url = os.getenv("DATABASE_URL")
     if not database_url:
-        raise RuntimeError(
-            "DATABASE_URL must be set for the read-only API database."
-        )
-
+        raise RuntimeError("DATABASE_URL must be set for the API.")
     url = make_url(database_url)
     if url.drivername == "postgresql":
         url = url.set(drivername="postgresql+psycopg")
     if url.drivername != "postgresql+psycopg":
-        raise RuntimeError(
-            "DATABASE_URL must use PostgreSQL with the psycopg driver."
-        )
+        raise RuntimeError("DATABASE_URL must be a postgresql:// URL.")
     return create_engine(url, pool_pre_ping=True)
 
 
 def get_repository(request: Request) -> ForecastRepository:
-    engine = getattr(request.app.state, "engine", None)
+    engine = request.app.state.engine
     if engine is None:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Read-only database is not configured.",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Database is not configured: set DATABASE_URL in .env and restart.",
         )
     return ForecastRepository(engine)
