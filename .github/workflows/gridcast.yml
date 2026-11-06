@@ -1,0 +1,72 @@
+
+name: GridCast Pipeline
+
+on:
+  schedule:
+    # Daily at 7:00 AM IST (01:30 UTC)
+    - cron: "30 1 * * *"
+    # Sunday at 8:00 AM IST (02:30 UTC)
+    - cron: "30 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Pipeline job to run manually"
+        required: true
+        type: choice
+        options:
+          - daily
+          - weekly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gridcast-pipeline
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '30 1 * * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'daily')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install project dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Run daily ingestion and forecast
+        env:
+          ADMIN_DATABASE_URL: ${{ secrets.ADMIN_DATABASE_URL }}
+        run: uv run --no-sync python scripts/run_pipeline.py daily
+
+  weekly:
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '30 2 * * 0') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'weekly')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install project dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Run weekly ingestion and retraining
+        env:
+          ADMIN_DATABASE_URL: ${{ secrets.ADMIN_DATABASE_URL }}
+        run: uv run --no-sync python scripts/run_pipeline.py weekly
