@@ -1,4 +1,3 @@
-
 name: GridCast Pipeline
 
 on:
@@ -34,6 +33,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Test Grid-India connectivity
+        run: |
+          python -c "import socket; print('DNS:', socket.gethostbyname_ex('webapi.grid-india.in'))"
+          python -c "import requests; u='https://webapi.grid-india.in/api/v1/file'; p={'_source':'GRDW','_type':'DAILY_PSP_REPORT','_fileDate':'2026-27','_month':'10'}; r=requests.post(u,json=p,headers={'User-Agent':'Mozilla/5.0','Content-Type':'application/json'},timeout=30); print('HTTP:',r.status_code); print(r.text[:300])"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
@@ -56,6 +60,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Test Grid-India connectivity
+        run: |
+          python -c "import socket; print('DNS:', socket.gethostbyname_ex('webapi.grid-india.in'))"
+          python -c "import requests; u='https://webapi.grid-india.in/api/v1/file'; p={'_source':'GRDW','_type':'DAILY_PSP_REPORT','_fileDate':'2026-27','_month':'10'}; r=requests.post(u,json=p,headers={'User-Agent':'Mozilla/5.0','Content-Type':'application/json'},timeout=30); print('HTTP:',r.status_code); print(r.text[:300])"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
