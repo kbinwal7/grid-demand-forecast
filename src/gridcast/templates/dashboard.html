@@ -23,11 +23,22 @@
 
     <p id="notice" class="notice" role="alert" hidden></p>
 
-    <main>
+    <section id="setup" class="setup" hidden>
+      <h2>No data to show yet</h2>
+      <p id="setup-reason"></p>
+      <ol>
+        <li>Create <code>.env</code> with <code>ADMIN_DATABASE_URL</code>, <code>DATABASE_URL</code>, <code>APP_DB_USER</code>, <code>APP_DB_PASSWORD</code> (see README).</li>
+        <li><code>python scripts/init_db.py</code> &nbsp;— creates tables and the read-only role</li>
+        <li><code>python scripts/seed_demo.py</code> &nbsp;— loads 90 days of demo data</li>
+        <li>Restart <code>uvicorn gridcast.api.main:app --reload --port 8001</code> and reload this page.</li>
+      </ol>
+    </section>
+
+    <main id="content">
       <section class="kpis" aria-label="Key figures">
         <article class="kpi">
           <h2>Expected peak</h2>
-          <p class="value"><span id="kpi-peak">—</span> <small>MW</small></p>
+          <p class="value"><span id="kpi-peak">—</span> <small>GW</small></p>
           <p class="note" id="kpi-peak-note">at — IST</p>
         </article>
         <article class="kpi">
@@ -49,7 +60,7 @@
         </article>
         <article class="kpi" id="tile-lag">
           <h2>Data freshness</h2>
-          <p class="value"><span id="kpi-lag">—</span> <small>days old</small></p>
+          <p class="value"><span id="kpi-lag">—</span> <small id="kpi-lag-unit">days old</small></p>
           <p class="status" id="status-lag"></p>
           <p class="note" id="kpi-lag-note"></p>
         </article>
@@ -67,7 +78,7 @@
         <section class="card">
           <header>
             <h2>Daily error · last 30 days</h2>
-            <p>MAPE over the whole day and over the 18:00–22:00 evening peak.</p>
+            <p>MAPE over the whole day and the 18:00–22:00 evening peak; dashed = backtest MAPE.</p>
           </header>
           <div id="chart-daily" class="chart" role="img" aria-label="Daily MAPE and peak-window MAPE"></div>
         </section>

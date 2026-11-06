@@ -76,11 +76,11 @@ python scripts/init_db.py
 python scripts/seed_demo.py
 
 # 4. run
-uvicorn gridcast.api.main:app --reload
+uvicorn gridcast.api.main:app --reload --port 8001   # 8000 is taken by another app on this PC
 ```
 
-- Dashboard: <http://127.0.0.1:8000/>
-- API docs (try every endpoint): <http://127.0.0.1:8000/docs>
+- Dashboard: <http://127.0.0.1:8001/>
+- API docs (try every endpoint): <http://127.0.0.1:8001/docs>
 
 Tests: `pytest -q`
 
