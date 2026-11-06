@@ -328,7 +328,7 @@ class GridIndiaClient:
             except (requests.RequestException, ValueError) as e:
                 last = e
                 log.debug("listing %s attempt %d: %s", key, attempt + 1, e)
-                time.sleep(2 ** attempt)
+                time.sleep(min(5 * (2 ** attempt), 60))
         else:
             hint = " (try --insecure)" if "SSL" in str(last) else ""
             raise RuntimeError(f"Listing API failed for {year}-{month:02d}: {last}{hint}")
@@ -359,7 +359,7 @@ class GridIndiaClient:
     def url_of(item: dict) -> str:
         return CDN_BASE.rstrip("/") + "/" + str(item["FilePath"]).lstrip("/")
 
-    def download(self, item: dict, raw_dir: Path, retries: int = 3) -> Optional[Path]:
+    def download(self, item: dict, raw_dir: Path, retries: int = 10) -> Optional[Path]:
         url = self.url_of(item)
         for attempt in range(retries):
             try:
