@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import pickle
 
 import lightgbm as lgb
 import pandas as pd
@@ -92,15 +93,18 @@ def register_model(engine, model_id, algo, feature_set, train_start, train_end, 
                            "cfg": json.dumps(config, default=str)})
 
 
-def save_forecasts(engine, model_id, source, preds: pd.Series, issued_at=None) -> int:
+def save_forecasts(engine, model_id, source, preds: pd.Series, issued_at=None, q10=None, q90=None) -> int:
     """preds: Series indexed by ts. For backtests issued_at defaults to the start of each day."""
     recs = [{"m": model_id, "s": source, "ts": ts.to_pydatetime(), "v": float(v),
-             "i": (pd.Timestamp(issued_at) if issued_at is not None else ts.normalize()).to_pydatetime()}
+             "i": (pd.Timestamp(issued_at) if issued_at is not None else ts.normalize()).to_pydatetime(),
+             "q10": float(q10.loc[ts]) if q10 is not None else None,
+             "q90": float(q90.loc[ts]) if q90 is not None else None}
             for ts, v in preds.items()]
-    sql = text("""INSERT INTO forecasts (model_id, source, ts, issued_at, yhat_mw)
-                  VALUES (:m, :s, :ts, :i, :v)
+    sql = text("""INSERT INTO forecasts (model_id, source, ts, issued_at, yhat_mw, q10_mw, q90_mw)
+                  VALUES (:m, :s, :ts, :i, :v, :q10, :q90)
                   ON CONFLICT (model_id, source, ts) DO UPDATE
-                  SET yhat_mw = EXCLUDED.yhat_mw, issued_at = EXCLUDED.issued_at""")
+                  SET yhat_mw = EXCLUDED.yhat_mw, issued_at = EXCLUDED.issued_at,
+                      q10_mw = EXCLUDED.q10_mw, q90_mw = EXCLUDED.q90_mw""")
     with engine.begin() as conn:
         conn.execute(sql, recs)
     return len(recs)
@@ -108,44 +112,48 @@ def save_forecasts(engine, model_id, source, preds: pd.Series, issued_at=None) -
 
 # ---------------------------------------------------------------- model storage + champion
 def pack_model(model, meta: dict) -> bytes:
-    if getattr(model, "algorithm", None) == "xgboost":
+    algorithm = getattr(model, "algorithm", "lightgbm")
+    if algorithm == "xgboost":
         raw_model = model.model_.get_booster().save_raw(raw_format="json")
-        blob = {
-            "algorithm": "xgboost",
-            "columns": model.columns_,
-            "booster": base64.b64encode(raw_model).decode("ascii"),
-            "meta": meta,
-        }
+        blob = {"algorithm": "xgboost", "columns": model.columns_,
+                "booster": base64.b64encode(raw_model).decode("ascii"), "meta": meta}
         return gzip.compress(json.dumps(blob, default=str).encode("utf-8"))
-
-    blob = {"columns": model.columns_, "booster": model.model_.booster_.model_to_string(), "meta": meta}
-    return gzip.compress(json.dumps(blob, default=str).encode("utf-8"))
+    if algorithm == "lightgbm":
+        blob = {"algorithm": "lightgbm", "columns": model.columns_,
+                "booster": model.model_.booster_.model_to_string(), "meta": meta}
+        return gzip.compress(json.dumps(blob, default=str).encode("utf-8"))
+    # Trusted, application-generated model artifacts only; never load user uploads here.
+    return gzip.compress(pickle.dumps({"algorithm": algorithm, "model": model,
+                                       "columns": model.columns_, "meta": meta}, protocol=pickle.HIGHEST_PROTOCOL))
 
 
 class StoredModel:
-    """Loads a packed model. predict() reorders columns, so column order can't drift."""
+    """Loads packed model artifacts and enforces training-time feature order."""
     def __init__(self, blob: bytes):
-        d = json.loads(gzip.decompress(blob).decode("utf-8"))
+        raw = gzip.decompress(blob)
+        if raw[:1] == b"\x80":
+            d = pickle.loads(raw)
+            self.algorithm, self.columns_, self.meta = d["algorithm"], d["columns"], d["meta"]
+            self._model = d["model"]
+            return
+        d = json.loads(raw.decode("utf-8"))
         self.columns_, self.meta = d["columns"], d["meta"]
         self.algorithm = d.get("algorithm", "lightgbm")
         if self.algorithm == "xgboost":
             import xgboost as xgb
-
             self._booster = xgb.Booster()
-            self._booster.load_model(
-                bytearray(base64.b64decode(d["booster"], validate=True))
-            )
+            self._booster.load_model(bytearray(base64.b64decode(d["booster"], validate=True)))
         elif self.algorithm == "lightgbm":
             self._booster = lgb.Booster(model_str=d["booster"])
         else:
             raise ValueError(f"Unsupported stored model algorithm: {self.algorithm}")
 
     def predict(self, X):
+        if hasattr(self, "_model"):
+            return self._model.predict(X[self.columns_])
         if self.algorithm == "xgboost":
             import xgboost as xgb
-
-            matrix = xgb.DMatrix(X[self.columns_], feature_names=self.columns_)
-            return self._booster.predict(matrix)
+            return self._booster.predict(xgb.DMatrix(X[self.columns_], feature_names=self.columns_))
         return self._booster.predict(X[self.columns_])
 
 

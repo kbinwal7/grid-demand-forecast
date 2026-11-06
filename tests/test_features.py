@@ -10,8 +10,8 @@ from gridcast.features import (
 
 CFG = {
     "forecast": {"target": "demand_met_mw", "horizon_steps": 96},
-    "features": {"demand_lags": [96, 672], "rolling_windows": [96],
-                 "gen_cols": ["solar_mw"], "gen_lags": [96], "use_month": False,
+    "features": {"demand_lags": [192, 672], "rolling_windows": [96],
+                 "gen_cols": ["solar_mw"], "gen_lags": [192], "use_month": False,
                  "use_weather": False},
 }
 
@@ -38,9 +38,21 @@ def test_future_data_does_not_change_features():
     pd.testing.assert_frame_equal(X1[safe], X2.loc[X1.index[safe]])
 
 
-def test_short_lag_is_rejected():
-    with pytest.raises(ValueError):
-        _check_lags([1, 96], horizon=96)
+def test_lags_that_depend_on_unpublished_d_minus_1_actuals_are_rejected():
+    with pytest.raises(ValueError, match="minimum lag is horizon"):
+        _check_lags([96, 192], horizon=96)
+
+
+def test_day_ahead_rolling_features_only_use_d_minus_2_or_older():
+    df = make_df(n_days=30)
+    X1, _ = build_features(df, CFG)
+    changed = df.copy()
+    target_day = df.index[20 * 96].normalize()
+    d_minus_1 = target_day - pd.Timedelta(days=1)
+    changed.loc[d_minus_1:d_minus_1 + pd.Timedelta(hours=23, minutes=45), :] = 999_999
+    X2, _ = build_features(changed, CFG)
+    target_rows = X1.index.normalize() == target_day
+    pd.testing.assert_frame_equal(X1.loc[target_rows], X2.loc[target_rows])
 
 
 def test_holiday_features_have_expected_values():

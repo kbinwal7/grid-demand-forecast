@@ -9,28 +9,49 @@ import pandas as pd
 
 from gridcast.backtest import run_backtest
 from gridcast.data import load_raw, make_regular
-from gridcast.db import upsert_raw                       # your existing demand upsert
+from gridcast.db import upsert_raw
 from gridcast.features import build_features
 from gridcast.metrics import mape
-from gridcast.models import Blend, LightGBMModel
+from gridcast.models import Blend, LightGBMModel, create_model
 from gridcast.pipeline import METRICS, comparable_rows
-from gridcast.store import (StoredModel, get_champion, live_vs_actual, load_artifact, pack_model,
-                            get_model_record, promote, prune_artifacts, read_demand, read_weather, register_model,
-                            save_artifact, save_forecasts, upsert_weather, weather_days_missing)
-from gridcast.weather import (WeatherError, WeatherRateLimitError, build_weighted_weather, load_weather,
-                              make_throttle, resolve_run, weather_table_path)
-
+from gridcast.store import (
+    StoredModel,
+    get_champion,
+    live_vs_actual,
+    load_artifact,
+    pack_model,
+    get_model_record,
+    promote,
+    prune_artifacts,
+    read_demand,
+    read_weather,
+    register_model,
+    save_artifact,
+    save_forecasts,
+    upsert_weather,
+    weather_days_missing,
+)
 from gridcast.weather import (
-    build_weighted_weather,
-    make_throttle,
-    resolve_run,
     WeatherError,
     WeatherRateLimitError,
+    build_weighted_weather,
+    load_weather,
+    make_throttle,
+    resolve_run,
+    weather_table_path,
 )
 
-DEFAULTS = {"model_prefix": "lgbm_weather", "min_rows": 20000, "max_staleness_days": 3,
-            "min_weather_coverage": 0.95, "min_prev_day_coverage": 0.9, "recent_folds": 3,
-            "recent_days": 28, "promote_tolerance": 0.02, "min_live_points": 672}
+DEFAULTS = {
+    "model_prefix": "lgbm_weather",
+    "min_rows": 20000,
+    "max_staleness_days": 3,
+    "min_weather_coverage": 0.95,
+    "min_prev_day_coverage": 0.9,
+    "recent_folds": 3,
+    "recent_days": 28,
+    "promote_tolerance": 0.02,
+    "min_live_points": 672,
+}
 
 
 class DataValidationError(RuntimeError):
@@ -46,11 +67,11 @@ def now_local(cfg) -> pd.Timestamp:
 
 
 # ---------------------------------------------------------------- ingest + weather
+
 def ingest(engine, cfg) -> int:
     from gridcast.scraper import fetch_latest
 
     df = fetch_latest()
-
     target = cfg["forecast"]["target"]
 
     if df is None or df.empty or target not in df.columns:
@@ -62,11 +83,9 @@ def ingest(engine, cfg) -> int:
         )
 
     count = upsert_raw(df, engine=engine)
-
     print(f"Demand ingestion: {count} rows upserted.")
 
     return count
-
 
 
 def sync_weather(engine, cfg, extra_days=()) -> list:
@@ -74,7 +93,7 @@ def sync_weather(engine, cfg, extra_days=()) -> list:
     Fetch target-day weather from Open-Meteo.
     If fetching fails, copy the latest complete stored weather day.
 
-    Fallback records are marked with their source date in the log.
+    Fallback records are shifted to the target date before saving.
     """
     days = sorted(
         set(weather_days_missing(engine))
@@ -120,9 +139,7 @@ def sync_weather(engine, cfg, extra_days=()) -> list:
             print(f"Open-Meteo failed for {day.date()}: {exc}")
 
             try:
-                fallback = load_latest_complete_weather(
-                    engine, day
-                )
+                fallback = load_latest_complete_weather(engine, day)
 
                 if fallback is None:
                     raise WeatherError(
@@ -132,12 +149,39 @@ def sync_weather(engine, cfg, extra_days=()) -> list:
                 source_day, fallback_weather = fallback
                 age = (day - source_day).days
 
-                max_age = cfg["weather"].get("max_fallback_age_days", 2)
+                max_age = cfg["weather"].get(
+                    "max_fallback_age_days", 2
+                )
 
                 if age > max_age:
                     raise WeatherError(
                         f"Fallback weather is too old: {age} days "
                         f"(maximum allowed: {max_age})."
+                    )
+
+                # Shift copied records to the TARGET day's timestamps.
+                # Without this, forecast_day() cannot find target-day weather.
+                fallback_weather = fallback_weather.copy()
+                fallback_weather.index = (
+                    pd.DatetimeIndex(fallback_weather.index)
+                    + (day - source_day)
+                )
+                fallback_weather.index.name = "ts"
+
+                expected_index = pd.date_range(
+                    start=day,
+                    periods=96,
+                    freq="15min",
+                    name="ts",
+                )
+
+                if (
+                    len(fallback_weather) != 96
+                    or not fallback_weather.index.equals(expected_index)
+                ):
+                    raise WeatherError(
+                        f"Fallback weather for {day.date()} is not exactly "
+                        "96 quarter-hourly rows."
                     )
 
                 run_ts = resolve_run(day, cfg["weather"])[1]
@@ -147,8 +191,6 @@ def sync_weather(engine, cfg, extra_days=()) -> list:
                     fallback_weather,
                     run_ts,
                 )
-
-                age = (day - source_day).days
 
                 print(
                     f"Used fallback weather from {source_day.date()} "
@@ -170,152 +212,529 @@ def sync_weather(engine, cfg, extra_days=()) -> list:
 
     return failures
 
+
 # ---------------------------------------------------------------- data + validation
+
 def build_dataset(engine, cfg):
-    df = make_regular(read_demand(engine), cfg["data"]["freq"], cfg["data"]["max_gap_steps"])
-    weather = read_weather(engine) if cfg["features"].get("use_weather") else None
+    df = make_regular(
+        read_demand(engine),
+        cfg["data"]["freq"],
+        cfg["data"]["max_gap_steps"],
+    )
+    weather = (
+        read_weather(engine)
+        if cfg["features"].get("use_weather")
+        else None
+    )
     return df, weather
 
 
 def validate_inputs(df, weather, cfg, now) -> None:
     j, problems = jobs_cfg(cfg), []
+
     n = int(df[cfg["forecast"]["target"]].notna().sum())
+
     if n < j["min_rows"]:
-        problems.append(f"only {n} demand rows (min {j['min_rows']})")
+        problems.append(
+            f"only {n} demand rows (min {j['min_rows']})"
+        )
+
     stale = (now.normalize() - df.index.max().normalize()).days
+
     if stale > j["max_staleness_days"]:
-        problems.append(f"latest demand is {stale} days old (max {j['max_staleness_days']})")
+        problems.append(
+            f"latest demand is {stale} days old "
+            f"(max {j['max_staleness_days']})"
+        )
+
     if weather is not None:
         cov = float(df.index.isin(weather.index).mean())
+
         if cov < j["min_weather_coverage"]:
-            problems.append(f"weather covers {cov:.1%} of demand rows (min {j['min_weather_coverage']:.0%})")
+            problems.append(
+                f"weather covers {cov:.1%} of demand rows "
+                f"(min {j['min_weather_coverage']:.0%})"
+            )
+
     if problems:
         raise DataValidationError("; ".join(problems))
 
 
-def decide_promotion(ch_mape, base_mape, champ_live_mape=None, tol=0.02):
+def fallback_feature_columns(columns, target):
+    """Select leakage-safe inputs for a simple historical-lag fallback model.
+
+    The current source does not reliably publish D-2 actual demand at issue
+    time, so use D-3 and week-ahead seasonal lags plus known calendar/weather
+    features. Rolling features are excluded from this simple fallback.
+    """
+    columns = list(columns)
+
+    required = [
+        f"{target}_lag288",
+        f"{target}_lag672",
+    ]
+
+    missing = [name for name in required if name not in columns]
+
+    if missing:
+        raise RuntimeError(
+            f"Fallback model is missing required historical lags: {missing}"
+        )
+
+    return [
+        name for name in columns
+        if not name.endswith(("_lag96", "_lag192"))
+        and "_roll" not in name
+    ]
+
+
+def decide_promotion(
+    ch_mape,
+    base_mape,
+    champ_live_mape=None,
+    tol=0.02,
+):
     reasons = []
+
     if not ch_mape < base_mape:
-        reasons.append(f"not better than baseline ({ch_mape:.2f}% vs {base_mape:.2f}%)")
-    if champ_live_mape is not None and ch_mape > champ_live_mape * (1 + tol):
-        reasons.append(f"worse than champion's live forecasts ({ch_mape:.2f}% vs {champ_live_mape:.2f}%)")
+        reasons.append(
+            f"not better than baseline "
+            f"({ch_mape:.2f}% vs {base_mape:.2f}%)"
+        )
+
+    if (
+        champ_live_mape is not None
+        and ch_mape > champ_live_mape * (1 + tol)
+    ):
+        reasons.append(
+            f"worse than champion's live forecasts "
+            f"({ch_mape:.2f}% vs {champ_live_mape:.2f}%)"
+        )
+
     return (not reasons), reasons
 
 
 # ---------------------------------------------------------------- weekly: retrain
+
 def retrain(engine, cfg, now=None) -> dict:
-    j, now = jobs_cfg(cfg), (now if now is not None else now_local(cfg))
+    j, now = jobs_cfg(cfg), (
+        now if now is not None else now_local(cfg)
+    )
+
     df, weather = build_dataset(engine, cfg)
     validate_inputs(df, weather, cfg, now)
 
     X, y = build_features(df, cfg, weather=weather)
     mask = comparable_rows(X, cfg)
+
     t, seed = cfg["forecast"]["target"], cfg["seed"]
 
-    cfg_bt = copy.deepcopy(cfg)                          # recent window only: fast and relevant
-    cfg_bt["backtest"].update(n_folds=j["recent_folds"], test_days=j["recent_days"])
-    res, preds = run_backtest(LightGBMModel(seed=seed), X, y, cfg_bt, eval_mask=mask)
-    base_res, _ = run_backtest(Blend([f"{t}_lag96", f"{t}_lag672"]), X, y, cfg_bt, eval_mask=mask)
-    m, base = res[METRICS].mean(), base_res[METRICS].mean()
+    cfg_bt = copy.deepcopy(cfg)
+    cfg_bt["backtest"].update(
+        n_folds=j["recent_folds"],
+        test_days=j["recent_days"],
+    )
 
-    final = LightGBMModel(seed=seed).fit(X, y)           # final model sees ALL data
-    model_id = f"{j['model_prefix']}_{now:%Y%m%d}"
-    args = dict(train_start=X.index.min(), train_end=X.index.max(), n_rows=len(X), config=cfg)
-    register_model(engine, model_id, "lightgbm", "weather", metrics=m, **args)
-    register_model(engine, "blend_1d_1w", "baseline", "demand_lags", metrics=base, **args)
-    save_artifact(engine, model_id, pack_model(final, {"model_id": model_id, "trained_at": str(now)}))
-    save_forecasts(engine, model_id, "backtest", preds["pred"])
+    base_res, _ = run_backtest(
+        Blend([f"{t}_lag288", f"{t}_lag672"]),
+        X,
+        y,
+        cfg_bt,
+        eval_mask=mask,
+    )
+
+    base = base_res[METRICS].mean()
+
+    # Compare compact candidates on the same chronological folds.
+    candidates = ["lightgbm", "ensemble", "extra_trees"]
+    scored = []
+
+    for algorithm in candidates:
+        try:
+            candidate = create_model(algorithm, seed=seed)
+
+            result, candidate_preds = run_backtest(
+                candidate,
+                X,
+                y,
+                cfg_bt,
+                eval_mask=mask,
+            )
+
+            score = float(result["mape"].mean())
+
+            if pd.notna(score):
+                scored.append(
+                    (score, algorithm, result, candidate_preds)
+                )
+
+        except Exception as exc:
+            print(
+                f"Skipping {algorithm} candidate after "
+                f"training/backtest error: {exc}"
+            )
+
+    if not scored:
+        raise DataValidationError(
+            "All configured forecasting candidates failed backtesting."
+        )
+
+    _, selected_algorithm, res, preds = min(
+        scored,
+        key=lambda item: item[0],
+    )
+
+    m = res[METRICS].mean()
+
+    final = create_model(
+        selected_algorithm,
+        seed=seed,
+    ).fit(X, y)
+
+    model_id = (
+        f"{j['model_prefix']}_{selected_algorithm}_{now:%Y%m%d}"
+    )
+
+    args = dict(
+        train_start=X.index.min(),
+        train_end=X.index.max(),
+        n_rows=len(X),
+        config=cfg,
+    )
+
+    register_model(
+        engine,
+        model_id,
+        selected_algorithm,
+        "weather",
+        metrics=m,
+        **args,
+    )
+
+    register_model(
+        engine,
+        "blend_1d_1w",
+        "baseline",
+        "demand_lags",
+        metrics=base,
+        **args,
+    )
+
+    # Calibrate an empirical 80% interval from out-of-fold residuals.
+    residuals = (preds["y"] - preds["pred"]).dropna()
+
+    lower_error, upper_error = (
+        float(residuals.quantile(0.10)),
+        float(residuals.quantile(0.90)),
+    )
+
+    calibration = {
+        "q10_error": lower_error,
+        "q90_error": upper_error,
+        "interval_method": "out_of_fold_residual_quantiles",
+    }
+
+    save_artifact(
+        engine,
+        model_id,
+        pack_model(
+            final,
+            {
+                "model_id": model_id,
+                "trained_at": str(now),
+                **calibration,
+            },
+        ),
+    )
+
+    save_forecasts(
+        engine,
+        model_id,
+        "backtest",
+        preds["pred"],
+        q10=pd.concat(
+            [
+                preds["pred"],
+                preds["pred"] + lower_error,
+            ],
+            axis=1,
+        ).min(axis=1).clip(lower=0),
+        q90=pd.concat(
+            [
+                preds["pred"],
+                preds["pred"] + upper_error,
+            ],
+            axis=1,
+        ).max(axis=1).clip(lower=0),
+    )
 
     ch_mape, champ_live = float(m["mape"]), None
     champ = get_champion(engine)
-    if champ and champ != model_id:
-        live = live_vs_actual(engine, champ, preds.index.min())
-        common = live.index.intersection(preds.index)
-        if len(common) >= j["min_live_points"]:          # like-for-like: same days, both out-of-sample
-            champ_live = mape(live.loc[common, "actual_mw"].to_numpy(), live.loc[common, "yhat_mw"].to_numpy())
-            ch_mape = mape(preds.loc[common, "y"].to_numpy(), preds.loc[common, "pred"].to_numpy())
 
-    ok, reasons = decide_promotion(ch_mape, float(base["mape"]), champ_live, j["promote_tolerance"])
+    if champ and champ != model_id:
+        live = live_vs_actual(
+            engine,
+            champ,
+            preds.index.min(),
+        )
+
+        common = live.index.intersection(preds.index)
+
+        if len(common) >= j["min_live_points"]:
+            champ_live = mape(
+                live.loc[common, "actual_mw"].to_numpy(),
+                live.loc[common, "yhat_mw"].to_numpy(),
+            )
+
+            ch_mape = mape(
+                preds.loc[common, "y"].to_numpy(),
+                preds.loc[common, "pred"].to_numpy(),
+            )
+
+    ok, reasons = decide_promotion(
+        ch_mape,
+        float(base["mape"]),
+        champ_live,
+        j["promote_tolerance"],
+    )
+
     if ok:
         promote(engine, model_id)
+
     prune_artifacts(engine)
-    print(f"{model_id}: promoted={ok} mape={ch_mape:.2f} baseline={float(base['mape']):.2f} {reasons}")
-    return {"model_id": model_id, "promoted": ok, "reasons": reasons,
-            "mape": ch_mape, "baseline_mape": float(base["mape"]), "champion_live_mape": champ_live}
+
+    print(
+        f"{model_id}: promoted={ok} "
+        f"mape={ch_mape:.2f} "
+        f"baseline={float(base['mape']):.2f} {reasons}"
+    )
+
+    return {
+        "model_id": model_id,
+        "promoted": ok,
+        "reasons": reasons,
+        "mape": ch_mape,
+        "baseline_mape": float(base["mape"]),
+        "champion_live_mape": champ_live,
+    }
 
 
 # ---------------------------------------------------------------- daily: forecast
-def forecast_day(engine, cfg, day, model_id=None, now=None) -> pd.Series:
-    j, now = jobs_cfg(cfg), (now if now is not None else now_local(cfg))
+
+def forecast_day(
+    engine,
+    cfg,
+    day,
+    model_id=None,
+    now=None,
+) -> pd.Series:
+    j, now = jobs_cfg(cfg), (
+        now if now is not None else now_local(cfg)
+    )
+
     day = pd.Timestamp(day).normalize()
+
     champion_id = get_champion(engine)
     model_id = model_id or champion_id
+
     if model_id is None:
-        raise RuntimeError("No champion model yet. Run the weekly job first.")
+        raise RuntimeError(
+            "No champion model yet. Run the weekly job first."
+        )
+
     if model_id != champion_id:
         model_record = get_model_record(engine, model_id)
-        metadata = model_record.get("config_json") if model_record else None
+        metadata = (
+            model_record.get("config_json")
+            if model_record
+            else None
+        )
+
         if isinstance(metadata, str):
             metadata = json.loads(metadata)
+
         if metadata and metadata.get("status") == "completed":
             raise ValueError(
-                "Experiment models cannot write production forecasts until explicitly promoted."
+                "Experiment models cannot write production forecasts "
+                "until explicitly promoted."
             )
+
     model = StoredModel(load_artifact(engine, model_id))
 
     df, weather = build_dataset(engine, cfg)
+
     if df.index.max() >= day:
-        raise ValueError(f"Demand already exists for {day.date()}; refusing to 'forecast' the past.")
-    if weather is None or not (weather.index.normalize() == day).any():
-        raise DataValidationError(f"No weather stored for {day.date()}.")
+        raise ValueError(
+            f"Demand already exists for {day.date()}; "
+            "refusing to 'forecast' the past."
+        )
 
-    prev = df.loc[day - pd.Timedelta(days=1): day - pd.Timedelta(minutes=15), cfg["forecast"]["target"]]
-    coverage = float(prev.notna().mean()) if len(prev) else 0.0
+    if weather is None or not (
+        weather.index.normalize() == day
+    ).any():
+        raise DataValidationError(
+            f"No weather stored for {day.date()}."
+        )
+
+    # Conservative D-3 cutoff: the source currently has not published
+    # D-2 actuals when this forecast is issued. Exclude D-2 and later
+    # from live features, even if those rows happen to exist locally.
+    history_cutoff = day - pd.Timedelta(days=2)
+    history = df.loc[df.index < history_cutoff].copy()
+
+    latest_available_day = day - pd.Timedelta(days=3)
+
+    latest_day = history.loc[
+        latest_available_day:
+        latest_available_day + pd.Timedelta(
+            hours=23,
+            minutes=45,
+        ),
+        cfg["forecast"]["target"],
+    ]
+
+    coverage = float(latest_day.notna().sum()) / 96.0
+
     if coverage < j["min_prev_day_coverage"]:
-        raise DataValidationError(f"Only {coverage:.0%} of yesterday's demand is present (min {j['min_prev_day_coverage']:.0%}).")
+        raise DataValidationError(
+            f"Only {coverage:.0%} of D-3 demand is present; "
+            f"day-ahead forecasting requires at least "
+            f"{j['min_prev_day_coverage']:.0%} coverage for "
+            f"{latest_available_day.date()}."
+        )
 
-    future = pd.date_range(day, periods=96, freq="15min", name="datetime")
-    grid = pd.date_range(df.index.min(), future[-1], freq=cfg["data"]["freq"], name="datetime")
-    X, _ = build_features(df.reindex(grid), cfg, weather=weather, drop_unlabeled=False)
+    future = pd.date_range(
+        day,
+        periods=96,
+        freq="15min",
+        name="datetime",
+    )
+
+    grid = pd.date_range(
+        history.index.min(),
+        future[-1],
+        freq=cfg["data"]["freq"],
+        name="datetime",
+    )
+
+    X, _ = build_features(
+        history.reindex(grid),
+        cfg,
+        weather=weather,
+        drop_unlabeled=False,
+    )
+
     Xd = X.loc[X.index.isin(future)]
-    if len(Xd) != 96:
-        raise RuntimeError(f"Expected 96 feature rows for {day.date()}, got {len(Xd)}.")
 
-    yhat = pd.Series(model.predict(Xd), index=Xd.index)
-    save_forecasts(engine, model_id, "live", yhat, issued_at=now)
-    print(f"{model_id}: saved live forecast for {day.date()} (peak {yhat.max():,.0f} MW at {yhat.idxmax():%H:%M})")
+    if len(Xd) != 96:
+        raise RuntimeError(
+            f"Expected 96 feature rows for {day.date()}, got {len(Xd)}."
+        )
+
+    yhat = pd.Series(
+        model.predict(Xd),
+        index=Xd.index,
+    ).clip(lower=0)
+
+    calibration = model.meta or {}
+
+    q10 = (
+        yhat + float(calibration.get("q10_error", 0.0))
+    ).clip(lower=0)
+
+    q90 = (
+        yhat + float(calibration.get("q90_error", 0.0))
+    ).clip(lower=0)
+
+    # Keep intervals ordered around the point forecast.
+    q10 = pd.concat(
+        [q10, yhat],
+        axis=1,
+    ).min(axis=1)
+
+    q90 = pd.concat(
+        [q90, yhat],
+        axis=1,
+    ).max(axis=1)
+
+    save_forecasts(
+        engine,
+        model_id,
+        "live",
+        yhat,
+        issued_at=now,
+        q10=q10,
+        q90=q90,
+    )
+
+    print(
+        f"{model_id}: saved live forecast for {day.date()} "
+        f"(peak {yhat.max():,.0f} MW at "
+        f"{yhat.idxmax():%H:%M})"
+    )
+
     return yhat
 
 
 # ---------------------------------------------------------------- orchestration
+
 def run_daily(engine, cfg):
+    """Ingest latest published actuals and issue tomorrow's day-ahead forecast."""
     ingest(engine, cfg)
-    today = now_local(cfg).normalize()
-    sync_weather(engine, cfg, extra_days=[today])
-    return forecast_day(engine, cfg, today)
+
+    target_day = (
+        now_local(cfg).normalize()
+        + pd.Timedelta(days=1)
+    )
+
+    sync_weather(
+        engine,
+        cfg,
+        extra_days=[target_day],
+    )
+
+    return forecast_day(engine, cfg, target_day)
 
 
 def run_weekly(engine, cfg):
     ingest(engine, cfg)
+
+    target_day = (
+        now_local(cfg).normalize()
+        + pd.Timedelta(days=1)
+    )
+
     sync_weather(
         engine,
         cfg,
-        extra_days=[now_local(cfg).normalize()]
+        extra_days=[target_day],
     )
+
     return retrain(engine, cfg)
 
 
 def bootstrap(engine, cfg):
     """One-time: load the existing CSV and weather parquet into the DB (no API calls)."""
-    n = upsert_raw(load_raw(Path(cfg["root"]) / cfg["data"]["raw_path"]))
+    n = upsert_raw(
+        load_raw(
+            Path(cfg["root"]) / cfg["data"]["raw_path"]
+        )
+    )
+
     wn, path = 0, weather_table_path(cfg)
+
     if path.exists():
         w = load_weather(path)
+
         for day, g in w.groupby(w.index.normalize()):
             if len(g) == 96:
-                wn += upsert_weather(engine, g, resolve_run(day, cfg["weather"])[1])
-    return n, wn
+                wn += upsert_weather(
+                    engine,
+                    g,
+                    resolve_run(day, cfg["weather"])[1],
+                )
 
+    return n, wn
 
 
 def load_latest_complete_weather(engine, target_day):
@@ -361,16 +780,17 @@ def load_latest_complete_weather(engine, target_day):
     )
 
     df["ts"] = pd.to_datetime(df["ts"])
-
     df = df.sort_values("ts")
-
     df["weather_day"] = df["ts"].dt.normalize()
 
     # Search newest source day first.
     for source_day in sorted(
-        df["weather_day"].unique(), reverse=True
+        df["weather_day"].unique(),
+        reverse=True,
     ):
-        day_df = df[df["weather_day"] == source_day].copy()
+        day_df = df[
+            df["weather_day"] == source_day
+        ].copy()
 
         day_df = day_df.sort_values("ts")
 
@@ -391,7 +811,12 @@ def load_latest_complete_weather(engine, target_day):
         day_df = day_df.set_index("ts")
 
         weather = day_df[
-            ["temp_c", "humidity", "apparent_c", "dew_point_c"]
+            [
+                "temp_c",
+                "humidity",
+                "apparent_c",
+                "dew_point_c",
+            ]
         ].copy()
 
         weather.index.name = "ts"
@@ -399,7 +824,6 @@ def load_latest_complete_weather(engine, target_day):
         return pd.Timestamp(source_day), weather
 
     return None
-
 
 
 def weather_days_missing(engine):
@@ -428,17 +852,28 @@ def weather_days_missing(engine):
         return []
 
     # Database DATE is timezone-naive.
-    latest = pd.Timestamp(latest).tz_localize(None).normalize()
+    latest = (
+        pd.Timestamp(latest)
+        .tz_localize(None)
+        .normalize()
+    )
 
     # Convert local date to a timezone-naive calendar date too.
-    today = pd.Timestamp.now(tz=tz).tz_localize(None).normalize()
+    today = (
+        pd.Timestamp.now(tz=tz)
+        .tz_localize(None)
+        .normalize()
+    )
+
     yesterday = today - pd.Timedelta(days=1)
 
     if latest >= yesterday:
         return []
 
-    return list(pd.date_range(
-        start=latest + pd.Timedelta(days=1),
-        end=yesterday,
-        freq="D",
-    ))
+    return list(
+        pd.date_range(
+            start=latest + pd.Timedelta(days=1),
+            end=yesterday,
+            freq="D",
+        )
+    )

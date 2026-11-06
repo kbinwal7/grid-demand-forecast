@@ -1,5 +1,6 @@
 seed: 42
 
+
 data:
   raw_path: data/raw/data.csv # change this
   freq: 15min
@@ -17,10 +18,10 @@ backtest:
   peak_end_hour: 22
 
 features:
-  demand_lags: [96, 192, 672]
+  demand_lags: [288, 672]
   rolling_windows: [96, 672]
   gen_cols: [solar_mw, wind_mw]
-  gen_lags: [96, 672]
+  gen_lags: [288, 672]
   use_month: false
   use_weather: true
   cdd_base_c: 24 # cooling-degree base temperature
@@ -47,11 +48,11 @@ jobs:
   max_staleness_days: 300
   min_weather_coverage: 0.95
   min_prev_day_coverage: 0.9
-  recent_folds: 3
-  recent_days: 28
+  recent_folds: 1
+  recent_days: 30
   promote_tolerance: 0.02
   min_live_points: 672
-
+  
 experiments:
   output_dir: data/experiments
   models:

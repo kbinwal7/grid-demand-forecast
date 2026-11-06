@@ -1,5 +1,6 @@
 import lightgbm as lgb
 import pandas as pd
+import numpy as np
 
 DEFAULT_PARAMS = dict(
     objective="regression", learning_rate=0.05, num_leaves=63,
@@ -140,9 +141,66 @@ class XGBoostModel:
         return self.model_.predict(X[self.columns_])
 
 
+class SklearnTreeModel:
+    """Small, reproducible sklearn tree baselines with a common fit/predict API."""
+    algorithm = "random_forest"
+
+    def __init__(self, estimator="random_forest", params=None, seed=42):
+        from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor, RandomForestRegressor
+        self.estimator_name = estimator
+        self.algorithm = estimator
+        defaults = {
+            "random_forest": (RandomForestRegressor, {"n_estimators": 250, "min_samples_leaf": 3, "max_features": 0.8, "n_jobs": -1}),
+            "extra_trees": (ExtraTreesRegressor, {"n_estimators": 250, "min_samples_leaf": 2, "max_features": 0.8, "n_jobs": -1}),
+            "hist_gradient_boosting": (HistGradientBoostingRegressor, {"max_iter": 300, "learning_rate": 0.06, "l2_regularization": 1.0}),
+        }
+        cls, options = defaults[estimator]
+        options.update(params or {})
+        options["random_state"] = seed
+        self.model_ = cls(**options)
+
+    def fit(self, X, y):
+        self.columns_ = list(X.columns)
+        self.model_.fit(X[self.columns_], y)
+        return self
+
+    def predict(self, X):
+        return self.model_.predict(X[self.columns_])
+
+
+class EnsembleModel:
+    """Equal-weight LightGBM/XGBoost ensemble; both members see identical features."""
+    algorithm = "ensemble"
+
+    def __init__(self, seed=42, params=None):
+        self.seed = seed
+        self.params = params or {
+            "lightgbm": {"max_rounds": 1200, "patience": 60},
+            "xgboost": {"max_rounds": 1200, "patience": 60},
+        }
+
+    def fit(self, X, y):
+        self.columns_ = list(X.columns)
+        self.members_ = [
+            LightGBMModel(seed=self.seed, **self.params.get("lightgbm", {})),
+            XGBoostModel(seed=self.seed, **self.params.get("xgboost", {})),
+        ]
+        for member in self.members_:
+            member.fit(X[self.columns_], y)
+        return self
+
+    def predict(self, X):
+        predictions = [np.asarray(member.predict(X[self.columns_]), dtype=float) for member in self.members_]
+        return np.mean(np.vstack(predictions), axis=0)
+
+
 MODEL_REGISTRY = {
     "lightgbm": LightGBMModel,
     "xgboost": XGBoostModel,
+    "random_forest": lambda **kw: SklearnTreeModel("random_forest", **kw),
+    "extra_trees": lambda **kw: SklearnTreeModel("extra_trees", **kw),
+    "hist_gradient_boosting": lambda **kw: SklearnTreeModel("hist_gradient_boosting", **kw),
+    "ensemble": EnsembleModel,
 }
 
 

@@ -183,3 +183,20 @@ service is intended to sit behind Render's proxy; do not expose the container
 directly to untrusted clients.
 
 Weather data by [Open-Meteo.com](https://open-meteo.com/).
+
+
+### Day-ahead information cutoff
+
+GridCast issues the forecast for **tomorrow (D)** on **today (D-1)**. Grid-India
+actual demand for D-1 is assumed to be published only after D-1 ends, so the
+forecast deliberately uses demand only through **D-2 23:45**. The feature set
+therefore uses 192-step (two-day) and 672-step (seven-day) demand/generation
+lags; 96-step lags and rolling features that could see D-1 actuals are not used
+as inputs. The rolling windows are shifted by the forecast horizon plus one
+publication-delay day so training, backtesting, and live inference share the
+same information cutoff.
+
+Run `uv run python scripts/run_pipeline.py daily` on D-1 to ingest the latest
+published actuals, fetch Delhi weather for D, and save the D forecast. The
+manual `forecast` command also defaults to tomorrow; pass `--date YYYY-MM-DD`
+to specify another target day.

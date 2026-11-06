@@ -9,10 +9,10 @@ from gridcast.weather import engineer_weather_features
 FEATURE_GROUPS = {
     "calendar": ["interval_of_day", "day_of_week", "is_weekend"],
     "holidays": ["is_holiday", "days_to_holiday", "days_since_holiday"],
-    "demand_lags": ["demand_met_mw_lag96", "demand_met_mw_lag192", "demand_met_mw_lag672"],
+    "demand_lags": ["demand_met_mw_lag288", "demand_met_mw_lag672"],
     "rolling": ["demand_roll96_mean", "demand_roll96_std",
                 "demand_roll672_mean", "demand_roll672_std"],
-    "gen_lags": ["solar_mw_lag96", "solar_mw_lag672", "wind_mw_lag96", "wind_mw_lag672"],
+    "gen_lags": ["solar_mw_lag288", "solar_mw_lag672", "wind_mw_lag288", "wind_mw_lag672"],
     "weather": ["weighted_temperature_2m", "weighted_relative_humidity_2m",
                 "weighted_apparent_temperature", "weighted_dew_point_2m",
                 "cdd", "app_cdd", "temp_day_max", "temp_day_mean", "temp_max_3d_mean"],
@@ -29,10 +29,19 @@ def select_groups(X: pd.DataFrame, groups: list[str]) -> pd.DataFrame:
 
 # ---------------------------------------------------------------- leakage guard
 def _check_lags(lags: list[int], horizon: int) -> None:
-    """A lag shorter than the horizon would use data we won't have at forecast time."""
-    bad = [l for l in lags if l < horizon]
+    """Require lags to respect the conservative D-3 data-availability cutoff.
+
+    The forecast for day D is issued on D-1. The source currently does not
+    reliably publish D-2 actual demand by then, so the latest usable actuals
+    are from D-3. With 15-minute data this requires horizon + 192 steps.
+    """
+    minimum = horizon + 192
+    bad = [lag for lag in lags if lag < minimum]
     if bad:
-        raise ValueError(f"Lags {bad} are shorter than horizon={horizon}: data leakage.")
+        raise ValueError(
+            f"Lags {bad} are too short for the D-3 data cutoff: "
+            f"minimum lag is horizon + 192 steps ({minimum})."
+        )
 
 
 # ---------------------------------------------------------------- calendar
@@ -76,9 +85,9 @@ def add_lags(df: pd.DataFrame, cols: list[str], lags: list[int], horizon: int) -
 
 
 def add_rolling(s: pd.Series, windows: list[int], horizon: int, name: str) -> pd.DataFrame:
-    # Shift by the horizon first so the window only sees data known at forecast time.
-    # (rolling() alone includes the current row, which is the leak.)
-    known = s.shift(horizon)
+    # Conservative D-3 cutoff: shift beyond the forecast horizon by a further
+    # two days so the rolling statistics use only data through D-3.
+    known = s.shift(horizon + 192)
     out = {}
     for w in windows:
         r = known.rolling(w)
@@ -119,11 +128,11 @@ def build_features(df, cfg, weather=None, drop_unlabeled=True):
     X = pd.concat(parts, axis=1)
     y = df[target]
 
-    # 1) Warm-up: at the start of the data, lags structurally can't exist. Cut those rows.
+    # 1) Warm-up: remove rows before all configured lag/rolling inputs can exist.
     warmup = max(
         max(f["demand_lags"], default=0),
         max(f["gen_lags"], default=0) if f["gen_cols"] else 0,
-        h + max(f["rolling_windows"], default=0),
+        h + 192 + max(f["rolling_windows"], default=0),
     )
     X, y = X.iloc[warmup:], y.iloc[warmup:]
 

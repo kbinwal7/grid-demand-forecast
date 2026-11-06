@@ -17,10 +17,10 @@ backtest:
   peak_end_hour: 22
 
 features:
-  demand_lags: [96, 192, 672]
+  demand_lags: [192, 672]
   rolling_windows: [96, 672]
   gen_cols: [solar_mw, wind_mw]
-  gen_lags: [96, 672]
+  gen_lags: [192, 672]
   use_month: false
   use_weather: true
   cdd_base_c: 24 # cooling-degree base temperature

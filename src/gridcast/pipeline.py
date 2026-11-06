@@ -1,4 +1,3 @@
-
 """Data loading and feature pipeline helpers."""
 
 from __future__ import annotations
@@ -51,7 +50,7 @@ def comparable_rows(X, cfg):
     target = cfg["forecast"]["target"]
 
     required = [
-        f"{target}_lag96",
+        f"{target}_lag288",
         f"{target}_lag672",
     ]
 

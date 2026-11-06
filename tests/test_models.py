@@ -40,3 +40,22 @@ def test_baselines():
     X = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
     assert SeasonalNaive("a").predict(X).tolist() == [1.0, 2.0]
     assert Blend(["a", "b"]).predict(X).tolist() == [2.0, 3.0]
+
+def test_additional_tree_models_share_the_estimator_contract():
+    from gridcast.models import create_model
+
+    X, y = _toy(n_days=8)
+    train, test = X.index < X.index[500], X.index >= X.index[500]
+    for algorithm in ("random_forest", "extra_trees", "hist_gradient_boosting"):
+        model = create_model(algorithm, seed=7).fit(X.loc[train], y.loc[train])
+        predictions = model.predict(X.loc[test])
+        assert len(predictions) == int(test.sum())
+        assert np.isfinite(predictions).all()
+
+
+def test_ensemble_is_registered_with_the_shared_model_contract():
+    from gridcast.models import MODEL_REGISTRY, create_model
+
+    assert "ensemble" in MODEL_REGISTRY
+    model = create_model("ensemble", seed=3)
+    assert model.algorithm == "ensemble"
