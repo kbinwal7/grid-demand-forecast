@@ -8,6 +8,7 @@ const STATUS_LABEL = { green: "On target", yellow: "Watch", red: "Off target", n
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 let last = null; // last fetched payloads, so a theme change can redraw without refetching
+let models = [];
 
 // ------------------------------------------------------------------ helpers
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -29,10 +30,10 @@ function baseLayout({ yTitle, xType } = {}) {
     paper_bgcolor: css("--surface"),
     plot_bgcolor: css("--surface"),
     font: { family: "system-ui, -apple-system, Segoe UI, sans-serif", color: css("--ink-2"), size: 12 },
-    margin: { l: 8, r: 8, t: 8, b: 8 },
+    margin: { l: 8, r: 8, t: 32, b: 8 },
     xaxis: { ...axis, type: xType, showgrid: false, showline: true },
     yaxis: { ...axis, title: { text: yTitle, font: { size: 11 } } },
-    legend: { orientation: "h", x: 0, y: 1.12, font: { color: css("--ink-2") } },
+    legend: { orientation: "h", x: 0, y: 1, yanchor: "bottom", font: { color: css("--ink-2") } },
     hoverlabel: { bgcolor: css("--surface"), bordercolor: css("--border"), font: { color: css("--ink") } },
     hovermode: "x unified",
   };
@@ -60,7 +61,8 @@ function setKpi(key, kpi, digits = 1) {
 
 // ------------------------------------------------------------------ renderers
 function renderSummary(s) {
-  setKpi("peak", s.peak_mw, 0);
+  setKpi("peak", { ...s.peak_mw, value: s.peak_mw.value === null ? null : s.peak_mw.value / 1000 }, 1);
+  $("kpi-lag-unit").textContent = s.data_lag_days.value === 1 ? "day old" : "days old";
   $("kpi-peak-note").textContent = s.peak_time ? `at ${s.peak_time} IST · ${s.peak_mw.note}` : s.peak_mw.note;
   setKpi("temp", s.max_temp_c);
   setKpi("mape", s.mape_7d, 2);
@@ -72,27 +74,28 @@ function renderSummary(s) {
 function renderDay(day) {
   if (!day) return empty("chart-day", "No forecast for this day.");
   const x = day.points.map((p) => p.ts);
+  const gw = (key) => day.points.map((p) => (p[key] === null ? null : p[key] / 1000));
   const traces = [];
   if (day.points.some((p) => p.q10_mw !== null)) {
     traces.push(
-      { x, y: day.points.map((p) => p.q10_mw), mode: "lines", line: { width: 0 }, hoverinfo: "skip", showlegend: false },
+      { x, y: gw("q10_mw"), mode: "lines", line: { width: 0 }, hoverinfo: "skip", showlegend: false },
       {
-        x, y: day.points.map((p) => p.q90_mw), mode: "lines", line: { width: 0 }, fill: "tonexty",
+        x, y: gw("q90_mw"), mode: "lines", line: { width: 0 }, fill: "tonexty",
         fillcolor: css("--band"), name: "q10–q90 interval", hoverinfo: "skip",
       },
     );
   }
   traces.push({
-    x, y: day.points.map((p) => p.yhat_mw), mode: "lines", name: `Forecast (${day.source})`,
-    line: { color: css("--series-1"), width: 2 }, hovertemplate: "%{y:,.0f} MW",
+    x, y: gw("yhat_mw"), mode: "lines", name: `Forecast (${day.source})`,
+    line: { color: css("--series-1"), width: 2.5 }, hovertemplate: "%{y:.1f} GW",
   });
   if (day.points.some((p) => p.actual_mw !== null)) {
     traces.push({
-      x, y: day.points.map((p) => p.actual_mw), mode: "lines", name: "Actual",
-      line: { color: css("--series-2"), width: 2 }, hovertemplate: "%{y:,.0f} MW",
+      x, y: gw("actual_mw"), mode: "lines", name: "Actual",
+      line: { color: css("--series-2"), width: 2 }, hovertemplate: "%{y:.1f} GW",
     });
   }
-  const layout = baseLayout({ yTitle: "Demand (MW)", xType: "date" });
+  const layout = baseLayout({ yTitle: "GW", xType: "date" });
   layout.xaxis.tickformat = "%H:%M";
   layout.xaxis.hoverformat = "%H:%M IST";
   draw("chart-day", traces, layout);
@@ -101,17 +104,25 @@ function renderDay(day) {
 function renderDaily(daily) {
   if (!daily?.items.length) return empty("chart-daily", "No scored forecasts in this window yet.");
   const x = daily.items.map((d) => d.day);
-  const layout = baseLayout({ yTitle: "MAPE (%)", xType: "date" });
+  const layout = baseLayout({ yTitle: "MAPE %", xType: "date" });
   layout.xaxis.hoverformat = "%a %d %b";
-  layout.bargap = 0.35;
+  layout.yaxis.rangemode = "tozero";
+  const target = models.find((m) => m.model_id === daily.model_id)?.cv_mape;
+  if (target) {
+    layout.shapes = [{
+      type: "line", xref: "paper", x0: 0, x1: 1, y0: target, y1: target,
+      line: { color: css("--muted"), width: 1.5, dash: "dash" },
+    }];
+  }
   draw("chart-daily", [
     {
-      type: "bar", x, y: daily.items.map((d) => d.mape), name: "Daily MAPE",
-      marker: { color: css("--series-1"), cornerradius: 4 }, hovertemplate: "%{y:.2f}%",
+      x, y: daily.items.map((d) => d.mape), mode: "lines", name: "Whole day",
+      line: { color: css("--series-1"), width: 2.5, shape: "spline", smoothing: 0.6 },
+      fill: "tozeroy", fillcolor: css("--band"), hovertemplate: "%{y:.2f}%",
     },
     {
-      x, y: daily.items.map((d) => d.peak_mape), mode: "lines+markers", name: "Peak 18–22h MAPE",
-      line: { color: css("--series-2"), width: 2 }, marker: { size: 8, line: { color: css("--surface"), width: 2 } },
+      x, y: daily.items.map((d) => d.peak_mape), mode: "lines", name: "Evening peak",
+      line: { color: css("--series-2"), width: 2, shape: "spline", smoothing: 0.6 },
       hovertemplate: "%{y:.2f}%",
     },
   ], layout);
@@ -136,7 +147,10 @@ function renderBias(heat) {
     type: "heatmap", z, customdata: n, x: [...Array(24).keys()], y: DAYS,
     zmin: -limit, zmax: limit, zmid: 0, xgap: 2, ygap: 2,
     colorscale: [[0, css("--div-neg")], [0.5, css("--div-mid")], [1, css("--div-pos")]],
-    colorbar: { thickness: 10, outlinewidth: 0, tickfont: { color: css("--muted"), size: 10 } },
+    colorbar: {
+      thickness: 8, len: 0.9, outlinewidth: 0, ticksuffix: " MW",
+      tickfont: { color: css("--muted"), size: 10 },
+    },
     hovertemplate: "%{y} %{x}:00<br>bias %{z:+,.0f} MW<br>%{customdata} intervals<extra></extra>",
   }], layout);
 }
@@ -171,16 +185,22 @@ async function refresh() {
   }
 }
 
+function showSetup(reason) {
+  $("setup-reason").textContent = reason;
+  $("setup").hidden = false;
+  $("content").hidden = true;
+  modelSelect.replaceChildren(new Option("—", ""));
+}
+
 async function init() {
   try {
-    const { items } = await getJson("/v1/models");
-    if (!items.length) throw new Error("No models registered yet. Run: python scripts/seed_demo.py");
+    models = (await getJson("/v1/models")).items;
+    if (!models.length) return showSetup("The database is connected but has no models or forecasts yet.");
     modelSelect.replaceChildren(
-      ...items.map((m) => new Option(`${m.model_id}${m.is_champion ? " ★ champion" : ""}`, m.model_id, false, m.is_champion)),
+      ...models.map((m) => new Option(`${m.model_id}${m.is_champion ? " ★ champion" : ""}`, m.model_id, false, m.is_champion)),
     );
   } catch (error) {
-    showNotice(error.message);
-    return;
+    return showSetup(error.message);
   }
   modelSelect.addEventListener("change", () => {
     dateInput.value = ""; // jump to the new model's latest forecast day
