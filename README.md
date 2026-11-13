@@ -113,6 +113,15 @@ python scripts/run_pipeline.py daily       # ingest latest actuals, forecast tom
 python -m gridcast.experiment --model xgboost   # non-promoting experiment
 ```
 
+**Catch-up after downtime:** `daily` forecasts tomorrow *and* any earlier day (back to
+`jobs.max_catchup_days`, default 14) that has no full day of live forecasts, and it widens the
+Grid-India fetch to cover the gap. A late forecast uses only data available at its original
+cutoff (D-3 demand, the weather run for that day), so it matches what would have been issued on
+time; `issued_at` records when it was actually generated. The `catchup` job (scheduled every 3
+hours) does the same but exits immediately, with no scraping or API calls, when nothing is
+missing. Run it by hand with `python scripts/run_pipeline.py catchup`, or re-issue one past day
+with `python scripts/run_pipeline.py forecast --date 2026-11-10 --allow-past`.
+
 **Information cutoff:** the forecast for day D is issued on D-1, and Grid-India publishes D-1
 actuals only after D-1 ends. So the features use demand only through D-2 (192- and
 672-step lags). Training, backtesting and live inference all use the same cutoff.

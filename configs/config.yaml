@@ -52,6 +52,9 @@ jobs:
   recent_days: 30
   promote_tolerance: 0.02
   min_live_points: 672
+  max_catchup_days: 14 # look back this far for days missing a live forecast
+  ingest_lookback_days: 8 # minimum days of Grid-India reports re-fetched per run
+  max_ingest_lookback_days: 45 # cap when widening the fetch after downtime
   
 experiments:
   output_dir: data/experiments
