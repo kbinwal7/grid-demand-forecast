@@ -524,11 +524,16 @@ def main(argv=None) -> int:
     return 2
 
 
-def fetch_latest():
+def fetch_latest(lookback_days: int = 7):
+    """Fetch the last `lookback_days`+1 published days ending yesterday.
+
+    The caller widens `lookback_days` after an outage so every missed day is
+    re-downloaded (see jobs.ingest).
+    """
     from datetime import date, timedelta
 
     end = date.today() - timedelta(days=1)
-    start = end - timedelta(days=7)
+    start = end - timedelta(days=max(int(lookback_days), 0))
 
     df = extract_range(
         start,

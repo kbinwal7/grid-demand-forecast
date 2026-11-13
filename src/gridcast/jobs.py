@@ -16,7 +16,9 @@ from gridcast.models import Blend, LightGBMModel, create_model
 from gridcast.pipeline import METRICS, comparable_rows
 from gridcast.store import (
     StoredModel,
+    first_live_forecast_day,
     get_champion,
+    live_forecast_days_complete,
     live_vs_actual,
     load_artifact,
     pack_model,
@@ -29,6 +31,7 @@ from gridcast.store import (
     save_artifact,
     save_forecasts,
     upsert_weather,
+    weather_complete_days,
     weather_days_missing,
 )
 from gridcast.weather import (
@@ -51,6 +54,10 @@ DEFAULTS = {
     "recent_days": 28,
     "promote_tolerance": 0.02,
     "min_live_points": 672,
+    # catch-up after downtime (VM off / runner offline / failed runs)
+    "max_catchup_days": 14,          # how far back to look for days without a live forecast
+    "ingest_lookback_days": 8,       # minimum days of Grid-India reports to re-fetch each run
+    "max_ingest_lookback_days": 45,  # upper bound when widening the fetch after an outage
 }
 
 
@@ -68,10 +75,31 @@ def now_local(cfg) -> pd.Timestamp:
 
 # ---------------------------------------------------------------- ingest + weather
 
-def ingest(engine, cfg) -> int:
+def ingest_lookback_days(engine, cfg, now=None) -> int:
+    """Days of Grid-India reports to fetch: wide enough to cover any outage since
+    the last stored demand row (with a 2-day overlap), never below the default."""
+    j = jobs_cfg(cfg)
+    now = now if now is not None else now_local(cfg)
+
+    with engine.connect() as conn:
+        from sqlalchemy import text
+
+        last = conn.execute(text("SELECT MAX(ts) FROM demand_raw")).scalar()
+
+    if last is None:
+        return int(j["max_ingest_lookback_days"])
+
+    gap = (now.normalize() - pd.Timestamp(last).normalize()).days
+    wanted = max(int(j["ingest_lookback_days"]), gap + 2)
+    return min(wanted, int(j["max_ingest_lookback_days"]))
+
+
+def ingest(engine, cfg, now=None) -> int:
     from gridcast.scraper import fetch_latest
 
-    df = fetch_latest()
+    lookback = ingest_lookback_days(engine, cfg, now)
+    print(f"Fetching Grid-India reports for the last {lookback + 1} day(s).")
+    df = fetch_latest(lookback)
     target = cfg["forecast"]["target"]
 
     if df is None or df.empty or target not in df.columns:
@@ -527,7 +555,14 @@ def forecast_day(
     day,
     model_id=None,
     now=None,
+    allow_past=False,
 ) -> pd.Series:
+    """Issue the day-ahead forecast for `day`.
+
+    allow_past=True is used by catch-up: the day may already have actuals in the
+    DB. That is leakage-safe because features only ever use demand up to D-3
+    (see history_cutoff below), exactly as on the day the forecast was due.
+    """
     j, now = jobs_cfg(cfg), (
         now if now is not None else now_local(cfg)
     )
@@ -563,7 +598,7 @@ def forecast_day(
 
     df, weather = build_dataset(engine, cfg)
 
-    if df.index.max() >= day:
+    if df.index.max() >= day and not allow_past:
         raise ValueError(
             f"Demand already exists for {day.date()}; "
             "refusing to 'forecast' the past."
@@ -678,22 +713,107 @@ def forecast_day(
 
 # ---------------------------------------------------------------- orchestration
 
+def missing_forecast_days(engine, cfg, now=None) -> list[pd.Timestamp]:
+    """Days from the first-ever live forecast through tomorrow (capped at
+    `max_catchup_days` back) that do not yet hold a full day of live forecasts.
+
+    Tomorrow is always included when missing. With no live history at all, only
+    tomorrow is returned (nothing to catch up on).
+    """
+    j = jobs_cfg(cfg)
+    now = now if now is not None else now_local(cfg)
+    tomorrow = now.normalize() + pd.Timedelta(days=1)
+
+    first = first_live_forecast_day(engine)
+    if first is None:
+        return [tomorrow]
+
+    earliest = max(first, tomorrow - pd.Timedelta(days=int(j["max_catchup_days"])))
+    done = live_forecast_days_complete(engine, earliest, tomorrow)
+
+    return [
+        d for d in pd.date_range(earliest, tomorrow, freq="D")
+        if d not in done
+    ]
+
+
+def _forecast_days(engine, cfg, days, now) -> dict:
+    """Forecast each day in chronological order. One bad day never blocks the
+    others; failures are collected and raised together so the workflow run fails."""
+    tomorrow = now.normalize() + pd.Timedelta(days=1)
+    results, failures = {}, []
+
+    for day in sorted(pd.Timestamp(d).normalize() for d in days):
+        try:
+            results[day] = forecast_day(
+                engine,
+                cfg,
+                day,
+                now=now,
+                allow_past=day < tomorrow,
+            )
+        except Exception as exc:
+            print(f"Forecast FAILED for {day.date()}: {exc}")
+            failures.append((day, str(exc)))
+
+    print(
+        f"Forecasts: {len(results)} saved, {len(failures)} failed "
+        f"({len(list(days))} day(s) requested)."
+    )
+
+    if failures:
+        raise RuntimeError(
+            "Forecast failed for: "
+            + "; ".join(f"{d.date()} ({msg})" for d, msg in failures)
+        )
+
+    return results
+
+
+def _sync_weather_for(engine, cfg, days, now):
+    """Fetch weather for tomorrow (always refreshed) and for catch-up days that have
+    none. Catch-up days with complete stored weather are left untouched."""
+    tomorrow = now.normalize() + pd.Timedelta(days=1)
+    have = weather_complete_days(engine, days)
+    todo = [d for d in days if d == tomorrow or d not in have]
+    return sync_weather(engine, cfg, extra_days=todo)
+
+
 def run_daily(engine, cfg):
-    """Ingest latest published actuals and issue tomorrow's day-ahead forecast."""
-    ingest(engine, cfg)
+    """Ingest published actuals, then forecast tomorrow AND any earlier day that
+    missed its forecast (e.g. the VM was off). Re-running refreshes tomorrow."""
+    now = now_local(cfg)
+    tomorrow = now.normalize() + pd.Timedelta(days=1)
 
-    target_day = (
-        now_local(cfg).normalize()
-        + pd.Timedelta(days=1)
-    )
+    days = sorted(set(missing_forecast_days(engine, cfg, now)) | {tomorrow})
+    if len(days) > 1:
+        print(
+            "Catch-up needed for: "
+            + ", ".join(str(d.date()) for d in days if d != tomorrow)
+        )
 
-    sync_weather(
-        engine,
-        cfg,
-        extra_days=[target_day],
-    )
+    ingest(engine, cfg, now=now)
+    _sync_weather_for(engine, cfg, days, now)
 
-    return forecast_day(engine, cfg, target_day)
+    return _forecast_days(engine, cfg, days, now)
+
+
+def run_catchup(engine, cfg):
+    """Cheap, idempotent: does nothing (no scraping, no API calls) unless some day
+    in the catch-up window is missing its live forecast. Safe to schedule often."""
+    now = now_local(cfg)
+    days = missing_forecast_days(engine, cfg, now)
+
+    if not days:
+        print("No missing forecasts; nothing to catch up.")
+        return {}
+
+    print("Missing forecasts for: " + ", ".join(str(d.date()) for d in days))
+
+    ingest(engine, cfg, now=now)
+    _sync_weather_for(engine, cfg, days, now)
+
+    return _forecast_days(engine, cfg, days, now)
 
 
 def run_weekly(engine, cfg):

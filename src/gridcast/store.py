@@ -53,6 +53,45 @@ def weather_days_missing(engine) -> list[pd.Timestamp]:
     return [pd.Timestamp(d) for d in pd.read_sql(q, engine)["day"]]
 
 
+def first_live_forecast_day(engine):
+    """Date of the earliest live forecast (any model), or None if there is none."""
+    with engine.connect() as conn:
+        day = conn.execute(text("SELECT MIN(ts) FROM forecasts WHERE source = 'live'")).scalar()
+    return pd.Timestamp(day).normalize() if day is not None else None
+
+
+def live_forecast_days_complete(engine, start, end, steps: int = 96) -> set[pd.Timestamp]:
+    """Days in [start, end] (inclusive) that already hold a full day of live forecasts.
+
+    Any model counts, so a champion change never causes old days to be re-forecast.
+    """
+    q = text("""SELECT ts::date AS day FROM forecasts
+                WHERE source = 'live' AND ts >= :s AND ts < :e
+                GROUP BY ts::date HAVING COUNT(DISTINCT ts) >= :n""")
+    params = {
+        "s": pd.Timestamp(start).normalize().to_pydatetime(),
+        "e": (pd.Timestamp(end).normalize() + pd.Timedelta(days=1)).to_pydatetime(),
+        "n": int(steps),
+    }
+    with engine.connect() as conn:
+        return {pd.Timestamp(r[0]).normalize() for r in conn.execute(q, params)}
+
+
+def weather_complete_days(engine, days, steps: int = 96) -> set[pd.Timestamp]:
+    """Subset of `days` that already have a full day of stored weather."""
+    days = [pd.Timestamp(d).normalize() for d in days]
+    if not days:
+        return set()
+    q = text("""SELECT ts::date AS day FROM weather_forecast
+                WHERE ts >= :s AND ts < :e
+                GROUP BY ts::date HAVING COUNT(*) >= :n""")
+    params = {"s": min(days).to_pydatetime(),
+              "e": (max(days) + pd.Timedelta(days=1)).to_pydatetime(), "n": int(steps)}
+    with engine.connect() as conn:
+        have = {pd.Timestamp(r[0]).normalize() for r in conn.execute(q, params)}
+    return have & set(days)
+
+
 def live_vs_actual(engine, model_id, start) -> pd.DataFrame:
     q = text("""SELECT ts, yhat_mw, actual_mw FROM forecast_vs_actual
                 WHERE model_id = :m AND source = 'live' AND ts >= :s ORDER BY ts""")
